@@ -140,3 +140,5 @@ Re-theme by changing the token values there, keeping every text pair at
 - Stock changes only through `/api/products/:id/adjust` and `/api/sales` (every change writes `stock_movements`); editing a product never changes stock.
 - `sales` and `sale_items` are `staging:private` (financial records); staging seeds fake `DEMO-` products and sales.
 - Reports use the Asia/Jakarta day.
+- The header has no visible app name because the platform bar above the app already shows it; the store button is the visible title and an `sr-only` `h1` keeps "KasirKU" for screen readers.
+- The Kasir tab shows a "Langkah awal" checklist (Buat toko, Tambah produk, Catat penjualan pertama) until the active store has a product and a sale; ticks come from real data (`/api/store` returns `hasSales`), and a per-store `localStorage['kasirku-onboarded-<id>']` flag keeps it hidden once done.

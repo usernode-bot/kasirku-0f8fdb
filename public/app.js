@@ -111,7 +111,7 @@
     return ids.length > 0;
   }
   async function loadStore() {
-    if (!hasStore()) { S.store = null; renderBrand(); return; }
+    if (!hasStore()) { S.store = null; renderBrand(); renderChecklist(); return; }
     try {
       S.store = await api('/api/store');
       S.taxPct = S.store ? S.store.taxPercent : 11;
@@ -120,6 +120,7 @@
       renderBrand();
       renderCart();
     } catch (e) { S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', taxPercent: 11 }; renderBrand(); }
+    renderChecklist();
   }
   async function loadProducts() {
     if (!hasStore()) { S.products = []; S.productsState = 'ok'; renderProducts(); return; }
@@ -149,7 +150,10 @@
     $('#store-gate').hidden = !empty;
     $('#main-area').hidden = empty;
     $$('#main-tabs [role=tab]').forEach((b) => { b.disabled = empty; });
+    // "Profil toko" only once there is a store to edit.
+    $('#open-store').hidden = empty;
     renderBrand();
+    renderChecklist();
   }
 
   // ── Shared state blocks ──
@@ -158,9 +162,77 @@
     + '<p class="text-body text-muted">Data lain di layar ini tetap bisa dipakai. Periksa koneksi, lalu coba lagi.</p>'
     + '<button type="button" class="btn-secondary" data-retry="' + retry + '">Coba lagi</button></div>';
 
+  // ── Langkah awal ──
+  // A three-step starter checklist whose ticks come from the shop's real data:
+  // a store exists, it has a product, it has a sale. Shown under the no-store
+  // gate, then at the top of the Kasir tab until all three steps are done for
+  // the active store. Once done, that store never sees it again (per browser).
+  function readOnboarded() {
+    try { return localStorage.getItem('kasirku-onboarded-' + S.activeStoreId) === '1'; } catch (_) { return false; }
+  }
+  function markOnboarded() {
+    try { localStorage.setItem('kasirku-onboarded-' + S.activeStoreId, '1'); } catch (_) {}
+  }
+  function checklistHtml(done) {
+    const nextIdx = done.indexOf(false);
+    const tick = '<svg viewBox="0 0 16 16" class="h-4 w-4" fill="none" aria-hidden="true">'
+      + '<path d="M3.5 8.5l3 3L12.5 5" class="stroke-on-accent" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    const steps = [
+      { label: 'Buat toko', hint: 'Nama toko dipakai di struk.', btn: '' },
+      { label: 'Tambah produk', hint: 'Produk yang dijual dan stok awalnya.',
+        btn: '<button type="button" class="btn-secondary shrink-0" data-new-product>Tambah produk</button>' },
+      { label: 'Catat penjualan pertama', hint: 'Pilih produk di bawah, lalu tekan Bayar.', btn: '' },
+    ];
+    return '<h2 class="section-label">Langkah awal</h2><ol class="list">'
+      + steps.map((s, i) => {
+        const isDone = done[i];
+        const isNext = nextIdx === i;
+        const waits = !done[0] && i > 0;
+        const circle = isDone
+          ? '<span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-accent bg-accent text-on-accent" role="img" aria-label="Selesai">' + tick + '</span>'
+          : '<span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 text-small font-medium '
+            + (isNext ? 'border-accent text-accent' : 'border-line text-muted') + '" aria-hidden="true">' + (i + 1) + '</span>';
+        const hint = waits ? 'Bisa setelah toko dibuat.' : s.hint;
+        const btn = isNext ? s.btn : '';
+        return '<li class="list-row">' + circle
+          + '<div class="min-w-0 grow"><p class="' + (isDone ? 'text-body text-muted line-through' : 'text-body font-medium') + '">' + s.label + '</p>'
+          + '<p class="text-small text-muted">' + hint + '</p></div>'
+          + btn + '</li>';
+      }).join('') + '</ol>';
+  }
+  function renderChecklist() {
+    const gate = $('#gate-checklist');
+    const kasir = $('#kasir-checklist');
+    if (!hasStore()) {
+      kasir.hidden = true; kasir.innerHTML = '';
+      // The store list failed to load: the failure is handled elsewhere, and a
+      // checklist that could be wrong stays off.
+      gate.innerHTML = S.storesState === 'ok' ? checklistHtml([false, false, false]) : '';
+      return;
+    }
+    gate.innerHTML = '';
+    if (readOnboarded()) { kasir.hidden = true; kasir.innerHTML = ''; return; }
+    const done = [true,
+      S.productsState === 'ok' && S.products.length > 0,
+      !!(S.store && S.store.hasSales === true)];
+    // Only the active store's own data may tick a step or end onboarding:
+    // right after a switch or a new store, S.store and S.products still hold
+    // the previous store's rows, and reading them here would tick (or even
+    // mark done) a store whose data never loaded.
+    const mine = S.store && S.store.id === S.activeStoreId;
+    const ready = S.productsState === 'ok' && mine && typeof S.store.hasSales === 'boolean';
+    if (!ready) { kasir.hidden = true; kasir.innerHTML = ''; return; }
+    const allDone = done.every(Boolean);
+    if (allDone) markOnboarded();
+    if (allDone) { kasir.hidden = true; kasir.innerHTML = ''; return; }
+    kasir.innerHTML = checklistHtml(done);
+    kasir.hidden = false;
+  }
+
   // ── Brand ──
   function renderBrand() {
     $('#brand-logo').innerHTML = logoSvg('h-10 w-10');
+    $('#gate-logo').innerHTML = logoSvg('h-14 w-14');
     const name = S.store ? S.store.name : '';
     // The active store now lives on the switcher button itself, so the old
     // muted subtitle stays empty (and hidden) to avoid printing the name twice.
@@ -205,6 +277,7 @@
     renderPos();
     renderStockList();
     $('#cat-list').innerHTML = categories().map((c) => '<option value="' + esc(c) + '"></option>').join('');
+    renderChecklist();
   }
   function renderPos() {
     const box = $('#pos-products');
@@ -314,6 +387,9 @@
       S.cart = []; S.paid = 0; $('#cash-paid').value = '';
       S.discType = 'none'; S.discValue = 0; $('#disc-type').value = 'none'; $('#disc-value').value = ''; $('#disc-value').disabled = true;
       S.paying = false;
+      // The first sale completes step 3 of "Langkah awal".
+      if (S.store) S.store.hasSales = true;
+      renderChecklist();
       renderCart(); loadProducts(); loadMovements();
       if (S.report) loadReport();
       toast('Transaksi ' + sale.invoiceNo + ' berhasil');

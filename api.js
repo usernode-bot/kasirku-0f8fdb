@@ -321,9 +321,13 @@ function mountApi({ app, pool, IS_STAGING }) {
   }));
 
   // ── Store profile (the active store) ──
+  // `hasSales` powers the "Langkah awal" checklist's third step: it is true
+  // once the store has recorded at least one sale.
   app.get('/api/store', h(async (req, res) => {
     if (!req.store) return res.json(null);
-    res.json(storeRow(req.store));
+    const { rows } = await pool.query(
+      'SELECT EXISTS (SELECT 1 FROM sales WHERE store_id = $1) AS has', [req.store.id]);
+    res.json(Object.assign(storeRow(req.store), { hasSales: rows[0].has }));
   }));
   app.put('/api/store', h(async (req, res) => {
     if (!req.store) throw new HttpError(404, 'Toko tidak ditemukan');

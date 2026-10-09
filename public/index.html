@@ -113,11 +113,13 @@
     <div class="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
       <span id="brand-logo" class="shrink-0"></span>
       <div class="flex min-w-0 grow flex-col items-start gap-1">
-        <h1 class="text-heading leading-tight">KasirKU</h1>
+        <!-- The platform bar above the app already shows the app's name, so the
+             visible title is the store button; this heading stays for screen readers. -->
+        <h1 class="sr-only">KasirKU</h1>
         <p id="brand-store" class="truncate text-small text-muted"></p>
         <button type="button" id="store-switch-btn" class="btn-secondary">Pilih toko ▾</button>
       </div>
-      <button type="button" id="open-store" class="btn-secondary">Profil toko</button>
+      <button type="button" id="open-store" class="btn-secondary" hidden>Profil toko</button>
     </div>
     <nav id="main-tabs" class="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4" role="tablist" aria-label="Menu utama">
       <button type="button" role="tab" data-tab="kasir" class="tab">Kasir / Penjualan</button>
@@ -129,11 +131,13 @@
 
   <!-- Belum ada toko: shown instead of the tabs when the account owns no store. -->
   <section id="store-gate" class="mx-auto max-w-7xl px-4 py-5" hidden>
-    <div class="state-empty mx-auto max-w-lg rounded-xl border border-line bg-surface">
-      <p class="text-heading">Belum ada toko</p>
+    <div class="state-empty mx-auto max-w-lg gap-3 rounded-xl border border-accent bg-surface">
+      <span id="gate-logo" class="shrink-0"></span>
+      <p class="text-title">Belum ada toko</p>
       <p class="text-body text-muted">Buat toko pertama Anda untuk mulai mencatat penjualan, stok dan laporan.</p>
-      <button type="button" class="btn-primary" data-new-store>Buat toko</button>
+      <button type="button" class="btn-primary w-full" data-new-store>Buat toko</button>
     </div>
+    <div id="gate-checklist" class="mx-auto mt-5 max-w-lg"></div>
   </section>
 
   <main id="main-area" class="mx-auto max-w-7xl px-4 py-5">
@@ -141,6 +145,7 @@
     <section id="tab-kasir" role="tabpanel" class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_26rem]">
       <div class="flex min-w-0 flex-col gap-4">
         <h2 class="sr-only">Kasir / Penjualan</h2>
+        <div id="kasir-checklist" hidden></div>
         <div>
           <label for="pos-search" class="section-label block">Cari produk</label>
           <input id="pos-search" type="search" class="field" placeholder="e.g. beras, atau DEMO-001" autocomplete="off">

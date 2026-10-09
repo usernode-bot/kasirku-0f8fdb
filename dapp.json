@@ -23,6 +23,16 @@
       ]
     },
     {
+      "id": "onboarding.checklist",
+      "name": "A new owner sees the starter checklist under the gate card",
+      "path": "/",
+      "expectText": "Langkah awal",
+      "impact": [
+        "public/**",
+        "api.js"
+      ]
+    },
+    {
       "id": "stok.inventory",
       "name": "Stock tab without a store shows the first-store screen",
       "path": "/#stok",
