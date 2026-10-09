@@ -7,5 +7,46 @@
   "visibility": {
     "build": "public",
     "view": "public"
-  }
+  },
+  "tests": [
+    {
+      "id": "kasir.catalog",
+      "name": "Kasir shows the product catalog and cart",
+      "path": "/",
+      "expectText": "Minyak Goreng 2 L",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "api.js",
+        "server.js",
+        "styles/**"
+      ]
+    },
+    {
+      "id": "stok.inventory",
+      "name": "Stock tab lists products with low-stock alert",
+      "path": "/#stok",
+      "expectText": "produk perlu restock",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "api.js",
+        "server.js",
+        "styles/**"
+      ]
+    },
+    {
+      "id": "laporan.daily",
+      "name": "Sales report shows gross profit",
+      "path": "/#laporan",
+      "expectText": "Estimasi laba kotor",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "api.js",
+        "server.js",
+        "styles/**"
+      ]
+    }
+  ]
 }

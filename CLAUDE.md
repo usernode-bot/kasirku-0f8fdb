@@ -97,24 +97,17 @@ tables you've marked private), etc.
 
 ## About KasirKU
 
-A simple cashier app for your shop's sales
-
-_(add a sentence or two more of product context here so Claude Code has a
-shared understanding of what this app is for)_
+A retail point of sale plus warehouse app for a small shop, in Indonesian, inspired by Kasir Pintar. Three tabs: Kasir / Penjualan (checkout), Manajemen Stok Gudang (catalog, low-stock alerts, restock / return / opname) and Laporan Penjualan (daily summary, history, gross profit, receipts).
 
 ## Design
 
 This app's look. The first real version fills in the blanks; every later
 change follows it, and updates it when a request changes the look on purpose.
 
-- **Palette:** _(name the accent, any second colour and the neutrals, e.g.
-  "accent: tomato red; second: basil green; neutrals: warm greys")_
-- **Signature element:** _(the one thing on screen drawn from this app's
-  subject, which no other app would have)_
+- **Palette:** accent: teal; neutrals: warm greys; no second colour (the starter tokens)
+- **Signature element:** the KasirKU logo (a cash register beside a box, `logoSvg()` in `public/app.js`) in the header and on receipts, and the receipt (monospace, dashed rules)
 - **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
   _(change their sizes in `tailwind.config.js` if you must, not their number)_
-- **One fixed look:** _(only for an app drawn as its own scene, such as a
-  game: which look, and why. Otherwise delete this line.)_
 
 The kit is in `styles/tailwind-input.css`: colour tokens with a light and
 a dark value (named in `tailwind.config.js`), and a few components
@@ -139,6 +132,9 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- UI copy is Indonesian. Money is whole rupiah (integers), shown as `Rp 10.000`.
+- Omzet = sales after discount, before PPN. HPP = cost price at the time of sale. Laba kotor = omzet - HPP.
+- "Retur" is a return to the supplier (stock decreases). Low stock means stock below the product's minimum.
+- Stock changes only through `/api/products/:id/adjust` and `/api/sales` (every change writes `stock_movements`); editing a product never changes stock.
+- `sales` and `sale_items` are `staging:private` (financial records); staging seeds fake `DEMO-` products and sales.
+- Reports use the Asia/Jakarta day.
