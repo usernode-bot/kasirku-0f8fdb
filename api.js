@@ -437,11 +437,14 @@ function mountApi({ app, pool, IS_STAGING }) {
   }));
 
   app.get('/api/movements', h(async (req, res) => {
-    if (!req.store) return res.json({ movements: [] });
+    if (!req.store) return res.json({ movements: [], hasSales: false });
     const { rows } = await pool.query(
       `SELECT m.*, p.name AS product_name FROM stock_movements m JOIN products p ON p.id = m.product_id
        WHERE m.store_id = $1 ORDER BY m.id DESC LIMIT 30`, [req.store.id]);
-    res.json({ movements: rows.map((r) => ({
+    // Whether the store has ever sold: read straight from `sales`, so a
+    // store older than the 30-movement window still ticks the checklist.
+    const hasSales = await pool.query('SELECT EXISTS(SELECT 1 FROM sales WHERE store_id = $1) AS has_sales', [req.store.id]);
+    res.json({ hasSales: hasSales.rows[0].has_sales, movements: rows.map((r) => ({
       id: r.id, product: r.product_name, type: r.type, qtyChange: r.qty_change, stockAfter: r.stock_after,
       note: r.note, ref: r.ref, createdAt: r.created_at })) });
   }));

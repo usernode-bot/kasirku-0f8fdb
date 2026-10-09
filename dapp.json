@@ -23,6 +23,17 @@
       ]
     },
     {
+      "id": "onboarding.checklist",
+      "name": "The first-store screen shows the starter checklist",
+      "path": "/",
+      "expectText": "Langkah awal",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "api.js"
+      ]
+    },
+    {
       "id": "stok.inventory",
       "name": "Stock tab without a store shows the first-store screen",
       "path": "/#stok",

@@ -57,7 +57,7 @@
     tab: 'kasir', stores: [], storesState: 'loading', activeStoreId: readSavedStore(),
     store: null, products: [], productsState: 'loading', q: '', cat: 'Semua', stockQ: '',
     cart: [], discType: 'none', discValue: 0, taxPct: 11, method: 'cash', paid: 0, paying: false,
-    movements: null, movementsState: 'loading', report: null, reportState: 'loading', reportDate: today(),
+    movements: null, movementsState: 'loading', hasSales: false, report: null, reportState: 'loading', reportDate: today(),
     receipt: null,
   };
   const hasStore = () => !!S.activeStoreId;
@@ -108,6 +108,7 @@
     if (!S.activeStoreId && ids.length) S.activeStoreId = ids[0];
     saveStore(S.activeStoreId);
     renderShell();
+    renderChecklist();
     return ids.length > 0;
   }
   async function loadStore() {
@@ -122,19 +123,24 @@
     } catch (e) { S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', taxPercent: 11 }; renderBrand(); }
   }
   async function loadProducts() {
-    if (!hasStore()) { S.products = []; S.productsState = 'ok'; renderProducts(); return; }
+    if (!hasStore()) { S.products = []; S.productsState = 'ok'; renderProducts(); renderChecklist(); return; }
     S.productsState = 'loading'; renderProducts();
     try {
       S.products = (await api('/api/products')).products;
       S.productsState = 'ok';
     } catch (e) { S.productsState = 'error'; }
     renderProducts();
+    renderChecklist();
   }
   async function loadMovements() {
-    if (!hasStore()) { S.movements = []; S.movementsState = 'ok'; renderMovements(); return; }
+    if (!hasStore()) { S.movements = []; S.movementsState = 'ok'; S.hasSales = false; renderMovements(); renderChecklist(); return; }
     S.movementsState = 'loading'; renderMovements();
-    try { S.movements = (await api('/api/movements')).movements; S.movementsState = 'ok'; } catch (e) { S.movementsState = 'error'; }
+    try {
+      const data = await api('/api/movements');
+      S.movements = data.movements; S.hasSales = !!data.hasSales; S.movementsState = 'ok';
+    } catch (e) { S.movementsState = 'error'; }
     renderMovements();
+    renderChecklist();
   }
   async function loadReport() {
     if (!hasStore()) { S.report = null; S.reportState = 'loading'; renderReport(); return; }
@@ -149,7 +155,46 @@
     $('#store-gate').hidden = !empty;
     $('#main-area').hidden = empty;
     $$('#main-tabs [role=tab]').forEach((b) => { b.disabled = empty; });
+    $('#gate-logo').innerHTML = logoSvg('h-12 w-12');
     renderBrand();
+  }
+
+  // ── Langkah awal: a three-step starter checklist read from real data ───
+  // No extra storage: a step ticks when the data says so, so the checklist
+  // disappears for good once the active store has products and a sale, and
+  // can reappear in another, still-empty store. It fills two containers:
+  // under the no-store gate card, and at the top of the Kasir tab.
+  const CHECK_SVG = '<svg viewBox="0 0 20 20" fill="none" stroke-width="1.5" aria-hidden="true" class="h-5 w-5 shrink-0 stroke-accent">'
+    + '<circle cx="10" cy="10" r="8"/><path d="M6.2 10.4l2.4 2.4 4.8-5.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const TODO_SVG = '<svg viewBox="0 0 20 20" fill="none" stroke-width="1.5" aria-hidden="true" class="h-5 w-5 shrink-0 stroke-line"><circle cx="10" cy="10" r="8"/></svg>';
+  const CHECKLIST_STEPS = ['Buat toko', 'Tambah produk', 'Catat penjualan pertama'];
+  function checklistHtml(rows) {
+    return '<h3 class="section-label">Langkah awal</h3><ul class="list">'
+      + rows.map((r) => '<li class="list-row">'
+        + (r.done ? CHECK_SVG : TODO_SVG)
+        + '<div class="min-w-0 grow"><p class="text-body font-medium">' + r.name + '</p>'
+        + (r.note ? '<p class="text-small text-muted">' + r.note + '</p>' : '') + '</div>'
+        + (r.done ? '<span class="badge text-accent shrink-0">Selesai</span>' : '')
+        + (r.button || '') + '</li>').join('') + '</ul>';
+  }
+  function renderChecklist() {
+    const done = [hasStore(), S.products.length > 0, S.hasSales];
+    if (done.every(Boolean)) { $('#gate-checklist').innerHTML = ''; $('#kasir-checklist').innerHTML = ''; return; }
+    // Gate: below the card. Steps 2 and 3 need the store first, so they wait.
+    $('#gate-checklist').innerHTML = checklistHtml([
+      { name: CHECKLIST_STEPS[0], done: done[0], note: 'Ketuk tombol Buat toko di atas.' },
+      { name: CHECKLIST_STEPS[1], done: done[1], note: 'Bisa setelah toko dibuat.' },
+      { name: CHECKLIST_STEPS[2], done: done[2], note: 'Bisa setelah toko dibuat.' },
+    ]);
+    // Kasir tab: only once both lists loaded OK, so no tick can lie.
+    const ready = hasStore() && S.productsState === 'ok' && S.movementsState === 'ok';
+    $('#kasir-checklist').innerHTML = ready
+      ? checklistHtml([
+          { name: CHECKLIST_STEPS[0], done: done[0] },
+          { name: CHECKLIST_STEPS[1], done: done[1], note: 'Tambahkan produk pertama di gudang.', button: '<button type="button" class="btn-secondary shrink-0" data-goto="stok">Buka stok gudang</button>' },
+          { name: CHECKLIST_STEPS[2], done: done[2], note: 'Pilih produk di bawah, lalu ketuk Bayar.' },
+        ])
+      : '';
   }
 
   // ── Shared state blocks ──
