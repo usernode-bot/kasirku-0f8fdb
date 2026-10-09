@@ -148,7 +148,11 @@
     const empty = !hasStore();
     $('#store-gate').hidden = !empty;
     $('#main-area').hidden = empty;
-    $$('#main-tabs [role=tab]').forEach((b) => { b.disabled = empty; });
+    $$('#main-tabs [role=tab]').forEach((b) => {
+      b.disabled = empty;
+      b.title = empty ? 'Buat toko dulu.' : '';
+    });
+    $('#tabs-lock').hidden = !empty;
     renderBrand();
   }
 

@@ -131,7 +131,7 @@
 @layer components {
   /* Main navigation tabs. */
   .tab {
-    @apply min-h-11 shrink-0 whitespace-nowrap border-b-2 border-transparent px-3 text-body font-medium text-muted
+    @apply inline-flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-3 text-body font-medium text-muted
       hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus aria-selected:border-accent aria-selected:text-fg;
   }
   /* A choice among a few: payment method, category. */
