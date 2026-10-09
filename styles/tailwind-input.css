@@ -126,3 +126,38 @@
     @apply flex flex-col items-center gap-2 px-4 py-8 text-center;
   }
 }
+
+/* ── KasirKU additions ────────────────────────────────────────────────── */
+@layer components {
+  /* Main navigation tabs. */
+  .tab {
+    @apply min-h-11 shrink-0 whitespace-nowrap border-b-2 border-transparent px-3 text-body font-medium text-muted
+      hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus aria-selected:border-accent aria-selected:text-fg;
+  }
+  /* A choice among a few: payment method, category. */
+  .seg {
+    @apply inline-flex min-h-11 items-center justify-center rounded-lg border border-line bg-surface px-3 text-body text-fg
+      hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-on-accent;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full bg-raised px-2 py-0.5 text-small font-medium;
+  }
+  .dlg {
+    @apply w-[calc(100%-2rem)] max-w-lg rounded-xl border border-line bg-surface p-0 text-fg backdrop:bg-black/50;
+  }
+  .th {
+    @apply px-3 py-2 text-left text-small font-medium text-muted;
+  }
+  .td {
+    @apply px-3 py-3 align-middle text-body;
+  }
+}
+
+/* Receipts print on white paper whatever the viewer's theme. */
+@media print {
+  :root, .dark {
+    --ground: 255 255 255; --surface: 255 255 255; --raised: 255 255 255;
+    --fg: 0 0 0; --muted: 64 64 64; --line: 160 160 160; --accent: 0 0 0; --on-accent: 255 255 255;
+  }
+  body { background: #fff; }
+}

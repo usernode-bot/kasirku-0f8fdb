@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -63,8 +63,8 @@
     try { post('info', ['[dev-console ready]'], { kind: 'ready' }); } catch (_) {}
   })();
   </script>
-  <title>KasirKU</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <title>KasirKU: Kasir dan Gudang</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%230f766e'/%3E%3Cpath d='M7 20h15l1.5 11h-18z' fill='white'/%3E%3Crect x='10' y='10' width='9' height='7' rx='1.5' fill='white'/%3E%3Cpath d='M31 10l6 3.500v7L31 24l-6-3.500v-7z' fill='white'/%3E%3C/svg%3E">
   <!-- Tailwind, PRECOMPILED for this app (was cdn.tailwindcss.com's
        in-browser engine plus an inline tailwind.config here). The config
        moved to tailwind.config.js in the repo root; npm run build compiles
@@ -108,28 +108,218 @@
   </script>
 </head>
 <body class="min-h-screen bg-ground text-fg">
-  <!-- Built from the design kit in styles/tailwind-input.css: colour tokens
-       that are right in both looks, and components for buttons, fields,
-       lists, cards and data states. The real app keeps the kit; CLAUDE.md's
-       "## Design" says how. -->
-  <!-- (Named in prose on purpose: Tailwind compiles any class-name word in
-       these files, comments included, and the starter should ship only the
-       components its screen uses.) -->
-  <main class="mx-auto flex max-w-md flex-col gap-8 px-4 py-10">
+<div id="app" class="print:hidden">
+  <header class="border-b border-line bg-surface">
+    <div class="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
+      <span id="brand-logo" class="shrink-0"></span>
+      <div class="min-w-0 grow">
+        <h1 class="text-heading leading-tight">KasirKU</h1>
+        <p id="brand-store" class="truncate text-small text-muted"></p>
+      </div>
+      <button type="button" id="open-store" class="btn-secondary">Profil toko</button>
+    </div>
+    <nav class="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4" role="tablist" aria-label="Menu utama">
+      <button type="button" role="tab" data-tab="kasir" class="tab">Kasir / Penjualan</button>
+      <button type="button" role="tab" data-tab="stok" class="tab">Manajemen Stok Gudang</button>
+      <button type="button" role="tab" data-tab="laporan" class="tab">Laporan Penjualan</button>
+    </nav>
+  </header>
+  <p id="staging-note" hidden class="border-b border-line bg-raised px-4 py-2 text-center text-small text-muted">Staging demo: data toko contoh, bukan toko sungguhan.</p>
 
-    <!-- usernode-starter-notice@1 — starter-template messaging. When building
-         the user's real app, replace this whole screen and delete this block,
-         both sentinel comments included. -->
-    <section class="card flex flex-col items-start gap-3">
-      <div class="flex h-20 w-20 items-center justify-center rounded-2xl border border-line bg-ground text-title">🧾</div>
-      <span class="rounded-full bg-raised px-3 py-1 text-small font-medium text-muted">Starter template</span>
-      <h1 class="text-title">KasirKU</h1>
-      <p class="text-body text-muted">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
-      <p class="text-body text-muted">To change this app, ask Homeroom bot: tap the <strong class="font-semibold text-fg">Homeroom icon</strong>, then <strong class="font-semibold text-fg">Suggest an improvement</strong>. Describe what you'd like in plain English, and it will be turned into your real app.</p>
+  <main class="mx-auto max-w-7xl px-4 py-5">
+    <!-- Kasir -->
+    <section id="tab-kasir" role="tabpanel" class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_26rem]">
+      <div class="flex min-w-0 flex-col gap-4">
+        <h2 class="sr-only">Kasir / Penjualan</h2>
+        <div>
+          <label for="pos-search" class="section-label block">Cari produk</label>
+          <input id="pos-search" type="search" class="field" placeholder="e.g. beras, atau DEMO-001" autocomplete="off">
+        </div>
+        <div id="pos-cats" class="flex gap-2 overflow-x-auto pb-1" role="group" aria-label="Kategori"></div>
+        <div id="pos-products"></div>
+      </div>
+
+      <aside class="flex h-fit flex-col gap-4 rounded-xl border border-line bg-surface p-4 lg:sticky lg:top-4" aria-label="Keranjang">
+        <div class="flex items-center justify-between">
+          <h2 class="text-heading">Keranjang</h2>
+          <button type="button" id="cart-clear" class="btn-secondary" hidden>Kosongkan</button>
+        </div>
+        <div id="cart-lines"></div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="disc-type" class="section-label block">Diskon</label>
+            <select id="disc-type" class="field">
+              <option value="none">Tanpa diskon</option>
+              <option value="percent">Persen (%)</option>
+              <option value="fixed">Nominal (Rp)</option>
+            </select>
+          </div>
+          <div>
+            <label for="disc-value" class="section-label block">Nilai diskon</label>
+            <input id="disc-value" class="field" inputmode="decimal" placeholder="e.g. 10" disabled>
+          </div>
+          <div class="col-span-2">
+            <label for="tax-pct" class="section-label block">PPN (%)</label>
+            <input id="tax-pct" class="field" inputmode="decimal" placeholder="e.g. 11">
+          </div>
+        </div>
+
+        <dl class="flex flex-col gap-1 border-t border-line pt-3 text-body">
+          <div class="flex justify-between"><dt class="text-muted">Subtotal</dt><dd id="t-sub">Rp 0</dd></div>
+          <div class="flex justify-between"><dt class="text-muted">Diskon</dt><dd id="t-disc">Rp 0</dd></div>
+          <div class="flex justify-between"><dt class="text-muted">PPN</dt><dd id="t-tax">Rp 0</dd></div>
+          <div class="flex justify-between pt-1 text-heading"><dt>Total</dt><dd id="t-total">Rp 0</dd></div>
+        </dl>
+
+        <fieldset>
+          <legend class="section-label">Metode pembayaran</legend>
+          <div id="pay-methods" class="grid grid-cols-2 gap-2">
+            <button type="button" data-method="cash" class="seg">Tunai</button>
+            <button type="button" data-method="qris" class="seg">QRIS</button>
+            <button type="button" data-method="debit" class="seg">Debit</button>
+            <button type="button" data-method="transfer" class="seg">Transfer bank</button>
+          </div>
+        </fieldset>
+
+        <div id="cash-box" class="flex flex-col gap-2">
+          <label for="cash-paid" class="section-label mb-0 block">Uang diterima</label>
+          <input id="cash-paid" class="field" inputmode="numeric" placeholder="e.g. 100000" autocomplete="off">
+          <div id="cash-quick" class="flex flex-wrap gap-2"></div>
+          <div class="flex justify-between text-body"><span class="text-muted">Uang kembalian</span><strong id="t-change">Rp 0</strong></div>
+        </div>
+
+        <p id="pay-hint" class="text-small text-muted" aria-live="polite"></p>
+        <button type="button" id="pay-btn" class="btn-primary w-full">Bayar</button>
+      </aside>
     </section>
-    <!-- /usernode-starter-notice@1 -->
 
-    <p class="text-center text-small text-muted">Built on Homeroom. This template screen disappears once you build your real app.</p>
+    <!-- Stok gudang -->
+    <section id="tab-stok" role="tabpanel" hidden class="flex flex-col gap-5">
+      <div class="flex flex-wrap items-end gap-3">
+        <h2 class="text-heading grow">Manajemen Stok Gudang</h2>
+        <div class="w-full sm:w-72">
+          <label for="stock-search" class="section-label block">Cari produk</label>
+          <input id="stock-search" type="search" class="field" placeholder="e.g. minyak" autocomplete="off">
+        </div>
+        <button type="button" id="add-product" class="btn-primary">Tambah produk</button>
+      </div>
+      <div id="low-alert"></div>
+      <div id="stock-list"></div>
+      <div>
+        <h3 class="section-label">Riwayat stok terbaru</h3>
+        <div id="movement-list"></div>
+      </div>
+    </section>
+
+    <!-- Laporan -->
+    <section id="tab-laporan" role="tabpanel" hidden class="flex flex-col gap-5">
+      <div class="flex flex-wrap items-end gap-3">
+        <h2 class="text-heading grow">Laporan Penjualan</h2>
+        <div>
+          <label for="report-date" class="section-label block">Tanggal</label>
+          <input id="report-date" type="date" class="field">
+        </div>
+      </div>
+      <div id="report-body"></div>
+    </section>
   </main>
+</div>
+
+<p id="toast" role="status" hidden class="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-fg px-4 py-2 text-small text-ground print:hidden"></p>
+
+<!-- Dialogs -->
+<dialog id="dlg-product" class="dlg">
+  <form id="form-product" class="flex flex-col gap-3 p-5" novalidate>
+    <h2 id="product-title" class="text-heading">Tambah produk</h2>
+    <div><label for="p-name" class="section-label block">Nama produk</label><input id="p-name" class="field" maxlength="120" placeholder="e.g. Gula Pasir 1 kg"></div>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <div><label for="p-sku" class="section-label block">SKU / barcode</label><input id="p-sku" class="field" maxlength="60" placeholder="e.g. 8991234567890"></div>
+      <div><label for="p-cat" class="section-label block">Kategori</label><input id="p-cat" class="field" list="cat-list" maxlength="60" placeholder="e.g. Sembako"><datalist id="cat-list"></datalist></div>
+      <div><label for="p-cost" class="section-label block">Harga modal (Rp)</label><input id="p-cost" class="field" inputmode="numeric" placeholder="e.g. 12000"></div>
+      <div><label for="p-sell" class="section-label block">Harga jual (Rp)</label><input id="p-sell" class="field" inputmode="numeric" placeholder="e.g. 15000"></div>
+      <div id="p-stock-wrap"><label for="p-stock" class="section-label block">Stok awal</label><input id="p-stock" class="field" inputmode="numeric" placeholder="e.g. 20"></div>
+      <div><label for="p-min" class="section-label block">Batas stok minimum</label><input id="p-min" class="field" inputmode="numeric" placeholder="e.g. 5"></div>
+    </div>
+    <p data-err role="alert" class="text-small text-danger"></p>
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <button type="button" id="p-delete" class="btn-secondary" hidden>Hapus produk</button>
+      <span class="grow"></span>
+      <button type="button" data-close class="btn-secondary">Batal</button>
+      <button type="submit" class="btn-primary">Simpan produk</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-adjust" class="dlg">
+  <form id="form-adjust" class="flex flex-col gap-3 p-5" novalidate>
+    <div>
+      <h2 class="text-heading">Sesuaikan stok</h2>
+      <p id="a-product" class="text-small text-muted"></p>
+    </div>
+    <div>
+      <label for="a-type" class="section-label block">Jenis penyesuaian</label>
+      <select id="a-type" class="field">
+        <option value="restock">Barang masuk (restock)</option>
+        <option value="return">Retur ke pemasok (stok berkurang)</option>
+        <option value="opname">Stok opname (hasil hitung fisik)</option>
+      </select>
+    </div>
+    <div>
+      <label for="a-qty" id="a-qty-label" class="section-label block">Jumlah</label>
+      <input id="a-qty" class="field" inputmode="numeric" placeholder="e.g. 10">
+    </div>
+    <div><label for="a-note" class="section-label block">Catatan (opsional)</label><input id="a-note" class="field" maxlength="200" placeholder="e.g. Kiriman dari pemasok"></div>
+    <p id="a-preview" class="text-small text-muted" aria-live="polite"></p>
+    <p data-err role="alert" class="text-small text-danger"></p>
+    <div class="flex justify-end gap-2">
+      <button type="button" data-close class="btn-secondary">Batal</button>
+      <button type="submit" class="btn-primary">Simpan penyesuaian</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-store" class="dlg">
+  <form id="form-store" class="flex flex-col gap-3 p-5" novalidate>
+    <h2 class="text-heading">Profil toko</h2>
+    <p class="text-small text-muted">Dipakai pada struk belanja.</p>
+    <div><label for="s-name" class="section-label block">Nama toko</label><input id="s-name" class="field" maxlength="80" placeholder="e.g. Toko Maju Jaya"></div>
+    <div><label for="s-address" class="section-label block">Alamat</label><input id="s-address" class="field" maxlength="200" placeholder="e.g. Jl. Melati No. 5, Bandung"></div>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <div><label for="s-phone" class="section-label block">Nomor telepon</label><input id="s-phone" class="field" maxlength="40" inputmode="tel" placeholder="e.g. 0812-3456-7890"></div>
+      <div><label for="s-tax" class="section-label block">PPN bawaan (%)</label><input id="s-tax" class="field" inputmode="decimal" placeholder="e.g. 11"></div>
+    </div>
+    <div>
+      <span class="section-label block">Logo di struk</span>
+      <div class="flex items-center gap-3">
+        <span id="s-logo-preview" class="shrink-0"></span>
+        <label class="btn-secondary cursor-pointer" for="s-logo-file">Unggah logo</label>
+        <input id="s-logo-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="sr-only">
+        <button type="button" id="s-logo-remove" class="btn-secondary" hidden>Hapus logo</button>
+      </div>
+      <p class="mt-1 text-small text-muted">Tanpa logo unggahan, struk memakai logo KasirKU.</p>
+    </div>
+    <p data-err role="alert" class="text-small text-danger"></p>
+    <div class="flex justify-end gap-2">
+      <button type="button" data-close class="btn-secondary">Batal</button>
+      <button type="submit" class="btn-primary">Simpan profil</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-receipt" class="dlg print:hidden">
+  <div class="flex flex-col gap-3 p-5">
+    <div id="receipt-view" class="max-h-[65vh] overflow-y-auto"></div>
+    <div class="flex flex-wrap justify-end gap-2">
+      <button type="button" data-close class="btn-secondary">Tutup</button>
+      <button type="button" id="receipt-share" class="btn-secondary">Bagikan</button>
+      <button type="button" id="receipt-print" class="btn-primary">Cetak struk</button>
+    </div>
+  </div>
+</dialog>
+
+<div id="print-area" class="hidden print:block"></div>
+
+<script src="/app.js"></script>
 </body>
 </html>
