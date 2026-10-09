@@ -28,6 +28,14 @@
   function saveStore(id) {
     try { if (id) localStorage.setItem('kasirku-store', String(id)); else localStorage.removeItem('kasirku-store'); } catch (_) {}
   }
+  // Onboarding is per store: the "Langkah awal" checklist hides for good for a
+  // store once all three of its steps are done (flag "1" in localStorage).
+  function onboardedKey(id) {
+    try { return localStorage.getItem('kasirku-onboarded-' + id) === '1'; } catch (_) { return false; }
+  }
+  function markOnboarded(id) {
+    try { localStorage.setItem('kasirku-onboarded-' + id, '1'); } catch (_) {}
+  }
 
   // ── API ──
   const urlToken = new URLSearchParams(location.search).get('token');
@@ -111,7 +119,7 @@
     return ids.length > 0;
   }
   async function loadStore() {
-    if (!hasStore()) { S.store = null; renderBrand(); return; }
+    if (!hasStore()) { S.store = null; renderBrand(); renderOnboarding(); return; }
     try {
       S.store = await api('/api/store');
       S.taxPct = S.store ? S.store.taxPercent : 11;
@@ -119,7 +127,8 @@
       $('#staging-note').hidden = !(S.store && S.store.staging);
       renderBrand();
       renderCart();
-    } catch (e) { S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', taxPercent: 11 }; renderBrand(); }
+      renderOnboarding();
+    } catch (e) { S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', taxPercent: 11 }; renderBrand(); renderOnboarding(); }
   }
   async function loadProducts() {
     if (!hasStore()) { S.products = []; S.productsState = 'ok'; renderProducts(); return; }
@@ -150,6 +159,7 @@
     $('#main-area').hidden = empty;
     $$('#main-tabs [role=tab]').forEach((b) => { b.disabled = empty; });
     renderBrand();
+    renderOnboarding();
   }
 
   // ── Shared state blocks ──
@@ -161,6 +171,7 @@
   // ── Brand ──
   function renderBrand() {
     $('#brand-logo').innerHTML = logoSvg('h-10 w-10');
+    $('#gate-logo').innerHTML = logoSvg('h-14 w-14');
     const name = S.store ? S.store.name : '';
     // The active store now lives on the switcher button itself, so the old
     // muted subtitle stays empty (and hidden) to avoid printing the name twice.
@@ -168,6 +179,69 @@
     sub.textContent = '';
     sub.hidden = true;
     $('#store-switch-btn').textContent = (name || 'Pilih toko') + ' ▾';
+  }
+
+  // ── Langkah awal: a three-step starter checklist ──
+  // One render function computes the three steps from the store's real data
+  // (a store exists, a product exists, a sale exists) and writes the list
+  // into whichever container is visible: below the "Belum ada toko" card
+  // before the first store, and at the top of the Kasir tab afterwards.
+  // Hidden while data is loading or failed, so no step ever shows a wrong
+  // tick, and gone for good once all three are done.
+  const STEP_DONE_SVG = '<svg viewBox="0 0 20 20" class="h-4 w-4 stroke-on-accent" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg>';
+  function stepMarker(state, num) {
+    if (state === 'done') return '<span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent">' + STEP_DONE_SVG + '</span>';
+    const cls = state === 'next' ? 'border-2 border-accent text-accent' : 'border-2 border-line text-muted';
+    return '<span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-small font-semibold ' + cls + '">' + num + '</span>';
+  }
+  function onboardingHtml(steps) {
+    const done = steps.filter((s) => s.done).length;
+    const next = steps.findIndex((s) => !s.done);
+    const rows = steps.map((s, i) => {
+      const state = s.done ? 'done' : i === next ? 'next' : 'later';
+      const titleCls = state === 'done' ? 'text-body font-medium text-muted line-through' : 'text-body font-medium';
+      return '<li class="list-row">' + stepMarker(state, i + 1)
+        + '<div class="min-w-0 grow"><p class="' + titleCls + '">' + esc(s.title) + '</p>'
+        + (state !== 'done' && s.hint ? '<p class="text-small text-muted">' + esc(s.hint) + '</p>' : '')
+        + '</div>'
+        + (state === 'done' ? '<span class="shrink-0 text-small text-muted">Selesai</span>' : (s.btn || ''))
+        + '</li>';
+    }).join('');
+    return '<div class="section-label flex justify-between"><span>Langkah awal</span><span>' + done + ' dari 3 selesai</span></div>'
+      + '<ol class="list" aria-label="Langkah awal">' + rows + '</ol>';
+  }
+  function renderOnboarding() {
+    const gateBox = $('#gate-steps');
+    const kasirBox = $('#kasir-steps');
+    if (!hasStore()) {
+      gateBox.innerHTML = onboardingHtml([
+        { done: false, title: 'Buat toko', hint: 'Pakai tombol Buat toko di atas.' },
+        { done: false, title: 'Tambah produk', hint: 'Bisa setelah toko dibuat.' },
+        { done: false, title: 'Catat penjualan pertama', hint: 'Bisa setelah toko dibuat.' },
+      ]);
+      kasirBox.hidden = true;
+      return;
+    }
+    gateBox.innerHTML = '';
+    // No guessed ticks: wait until products and the sale flag have really loaded.
+    if (S.productsState !== 'ok' || typeof (S.store && S.store.hasSales) !== 'boolean') { kasirBox.hidden = true; return; }
+    if (onboardedKey(S.activeStoreId)) { kasirBox.hidden = true; return; }
+    const prodDone = S.products.length > 0;
+    const saleDone = !!S.store.hasSales;
+    if (prodDone && saleDone) { markOnboarded(S.activeStoreId); kasirBox.hidden = true; return; }
+    const steps = [{ done: true, title: 'Buat toko' }];
+    steps.push(prodDone
+      ? { done: true, title: 'Tambah produk' }
+      : {
+        done: false, title: 'Tambah produk', hint: 'Masukkan harga modal, harga jual dan stok awal.',
+        btn: '<button type="button" class="btn-secondary shrink-0" data-new-product>Tambah produk</button>',
+      });
+    steps.push({
+      done: saleDone, title: 'Catat penjualan pertama',
+      hint: prodDone ? 'Pilih produk di bawah, lalu tekan Bayar.' : 'Bisa setelah ada produk.',
+    });
+    kasirBox.innerHTML = onboardingHtml(steps);
+    kasirBox.hidden = false;
   }
 
   // ── Store switcher ──
@@ -205,6 +279,7 @@
     renderPos();
     renderStockList();
     $('#cat-list').innerHTML = categories().map((c) => '<option value="' + esc(c) + '"></option>').join('');
+    renderOnboarding();
   }
   function renderPos() {
     const box = $('#pos-products');
@@ -314,6 +389,9 @@
       S.cart = []; S.paid = 0; $('#cash-paid').value = '';
       S.discType = 'none'; S.discValue = 0; $('#disc-type').value = 'none'; $('#disc-value').value = ''; $('#disc-value').disabled = true;
       S.paying = false;
+      // The first sale completes the checklist: the next render sees hasSales
+      // and hides "Langkah awal" for this store for good.
+      if (S.store) S.store.hasSales = true;
       renderCart(); loadProducts(); loadMovements();
       if (S.report) loadReport();
       toast('Transaksi ' + sale.invoiceNo + ' berhasil');
@@ -469,7 +547,10 @@
     const name = $('#s-name').value.trim();
     if (!name) return setErr($('#dlg-store'), 'Nama toko wajib diisi.');
     try {
-      S.store = await api('/api/store', { method: 'PUT', body: { name, address: $('#s-address').value.trim(), phone: $('#s-phone').value.trim(), logoUrl: logoDraft, taxPercent: dec($('#s-tax').value) } });
+      const saved = await api('/api/store', { method: 'PUT', body: { name, address: $('#s-address').value.trim(), phone: $('#s-phone').value.trim(), logoUrl: logoDraft, taxPercent: dec($('#s-tax').value) } });
+      // The PUT response carries no hasSales; keep the loaded one so the
+      // checklist state survives editing the profile.
+      S.store = Object.assign({}, S.store, saved);
       S.taxPct = S.store.taxPercent; $('#tax-pct').value = String(S.taxPct);
       const idx = S.stores.findIndex((s) => s.id === S.store.id);
       if (idx >= 0) S.stores[idx] = Object.assign({}, S.stores[idx], S.store);
