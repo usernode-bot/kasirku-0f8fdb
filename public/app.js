@@ -19,6 +19,16 @@
   });
   const fmtTime = (iso) => new Date(iso).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit' });
 
+  // ── Active store (per browser) ──
+  // The chosen store lives in localStorage and rides on every API call as
+  // `x-usernode-store`. The server re-validates ownership on every request.
+  function readSavedStore() {
+    try { const v = Number(localStorage.getItem('kasirku-store')); return Number.isInteger(v) && v > 0 ? v : null; } catch (_) { return null; }
+  }
+  function saveStore(id) {
+    try { if (id) localStorage.setItem('kasirku-store', String(id)); else localStorage.removeItem('kasirku-store'); } catch (_) {}
+  }
+
   // ── API ──
   const urlToken = new URLSearchParams(location.search).get('token');
   if (urlToken) { try { sessionStorage.setItem('kasirku-token', urlToken); } catch (_) {} }
@@ -30,6 +40,7 @@
     const o = opts || {};
     const headers = { 'content-type': 'application/json' };
     if (token()) headers['x-usernode-token'] = token();
+    if (S.activeStoreId) headers['x-usernode-store'] = String(S.activeStoreId);
     if (window.usernode && usernode.previewNow) headers['x-usernode-now'] = usernode.now().toISOString();
     const res = await fetch(path, { method: o.method || 'GET', headers, body: o.body ? JSON.stringify(o.body) : undefined });
     const data = await res.json().catch(() => ({}));
@@ -43,11 +54,13 @@
 
   // ── State ──
   const S = {
-    tab: 'kasir', store: null, products: [], productsState: 'loading', q: '', cat: 'Semua', stockQ: '',
+    tab: 'kasir', stores: [], storesState: 'loading', activeStoreId: readSavedStore(),
+    store: null, products: [], productsState: 'loading', q: '', cat: 'Semua', stockQ: '',
     cart: [], discType: 'none', discValue: 0, taxPct: 11, method: 'cash', paid: 0, paying: false,
     movements: null, movementsState: 'loading', report: null, reportState: 'loading', reportDate: today(),
     receipt: null,
   };
+  const hasStore = () => !!S.activeStoreId;
 
   let toastTimer;
   function toast(msg) {
@@ -85,17 +98,31 @@
   }
 
   // ── Loading ──
+  async function loadStores() {
+    try {
+      S.stores = (await api('/api/stores')).stores;
+      S.storesState = 'ok';
+    } catch (e) { S.storesState = 'error'; S.stores = []; }
+    const ids = S.stores.map((s) => s.id);
+    if (S.activeStoreId && !ids.includes(S.activeStoreId)) S.activeStoreId = null;
+    if (!S.activeStoreId && ids.length) S.activeStoreId = ids[0];
+    saveStore(S.activeStoreId);
+    renderShell();
+    return ids.length > 0;
+  }
   async function loadStore() {
+    if (!hasStore()) { S.store = null; renderBrand(); return; }
     try {
       S.store = await api('/api/store');
-      S.taxPct = S.store.taxPercent;
+      S.taxPct = S.store ? S.store.taxPercent : 11;
       $('#tax-pct').value = String(S.taxPct);
-      $('#staging-note').hidden = !S.store.staging;
+      $('#staging-note').hidden = !(S.store && S.store.staging);
       renderBrand();
       renderCart();
     } catch (e) { S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', taxPercent: 11 }; renderBrand(); }
   }
   async function loadProducts() {
+    if (!hasStore()) { S.products = []; S.productsState = 'ok'; renderProducts(); return; }
     S.productsState = 'loading'; renderProducts();
     try {
       S.products = (await api('/api/products')).products;
@@ -104,14 +131,25 @@
     renderProducts();
   }
   async function loadMovements() {
+    if (!hasStore()) { S.movements = []; S.movementsState = 'ok'; renderMovements(); return; }
     S.movementsState = 'loading'; renderMovements();
     try { S.movements = (await api('/api/movements')).movements; S.movementsState = 'ok'; } catch (e) { S.movementsState = 'error'; }
     renderMovements();
   }
   async function loadReport() {
+    if (!hasStore()) { S.report = null; S.reportState = 'loading'; renderReport(); return; }
     S.reportState = 'loading'; renderReport();
     try { S.report = await api('/api/reports?date=' + encodeURIComponent(S.reportDate)); S.reportState = 'ok'; } catch (e) { S.reportState = 'error'; }
     renderReport();
+  }
+
+  // ── Shell: the no-store gate vs the tabs ──
+  function renderShell() {
+    const empty = !hasStore();
+    $('#store-gate').hidden = !empty;
+    $('#main-area').hidden = empty;
+    $$('#main-tabs [role=tab]').forEach((b) => { b.disabled = empty; });
+    renderBrand();
   }
 
   // ── Shared state blocks ──
@@ -123,7 +161,42 @@
   // ── Brand ──
   function renderBrand() {
     $('#brand-logo').innerHTML = logoSvg('h-10 w-10');
-    $('#brand-store').textContent = S.store ? S.store.name : '';
+    const name = S.store ? S.store.name : '';
+    // The active store now lives on the switcher button itself, so the old
+    // muted subtitle stays empty (and hidden) to avoid printing the name twice.
+    const sub = $('#brand-store');
+    sub.textContent = '';
+    sub.hidden = true;
+    $('#store-switch-btn').textContent = (name || 'Pilih toko') + ' ▾';
+  }
+
+  // ── Store switcher ──
+  function renderStoresDialog() {
+    $('#open-store-profile').hidden = !hasStore();
+    const box = $('#stores-list');
+    if (S.storesState === 'error') { box.innerHTML = errorBox('Daftar toko', 'stores'); return; }
+    if (!S.stores.length) {
+      box.innerHTML = '<div class="state-empty rounded-xl border border-line bg-surface"><p class="text-body text-muted">Belum ada toko. Tambahkan toko pertama Anda.</p></div>';
+      return;
+    }
+    box.innerHTML = '<ul class="list">' + S.stores.map((s) =>
+      '<li class="list-row"><div class="min-w-0 grow"><p class="text-body font-medium">' + esc(s.name) + '</p>'
+      + (s.address ? '<p class="text-small text-muted truncate">' + esc(s.address) + '</p>' : '') + '</div>'
+      + (s.id === S.activeStoreId
+        ? '<span class="badge text-accent shrink-0">Toko aktif</span>'
+        : '<button type="button" class="btn-secondary shrink-0" data-switch="' + s.id + '">Pilih</button>') + '</li>').join('') + '</ul>';
+  }
+  function openStores() { renderStoresDialog(); openDlg($('#dlg-stores')); }
+
+  async function setActiveStore(id) {
+    if (!S.stores.some((s) => s.id === id)) return;
+    if (id === S.activeStoreId) { $('#dlg-stores').close(); return; }
+    S.activeStoreId = id; saveStore(id);
+    // A cart belongs to one store: never shop two stores in one transaction.
+    S.cart = []; S.paid = 0; S.cat = 'Semua'; S.q = ''; $('#cash-paid').value = ''; $('#pos-search').value = '';
+    renderShell(); $('#dlg-stores').close();
+    toast('Toko aktif: ' + ((S.stores.find((s) => s.id === id) || {}).name || ''));
+    await loadStore(); loadProducts(); loadMovements(); if (S.tab === 'laporan') loadReport();
   }
 
   // ── Kasir ──
@@ -366,19 +439,21 @@
     } catch (err) { setErr($('#dlg-adjust'), err.message); }
   });
 
-  // ── Profil toko ──
+  // ── Profil toko (active store) ──
   let logoDraft = '';
   function renderLogoDraft() {
     $('#s-logo-preview').innerHTML = logoDraft
       ? '<img src="' + esc(logoDraft) + '" alt="Logo toko" class="h-12 w-12 rounded-lg object-cover">' : logoSvg('h-12 w-12');
     $('#s-logo-remove').hidden = !logoDraft;
   }
-  $('#open-store').addEventListener('click', () => {
+  function openStoreProfile() {
     const s = S.store || {};
     $('#s-name').value = s.name || ''; $('#s-address').value = s.address || ''; $('#s-phone').value = s.phone || '';
     $('#s-tax').value = s.taxPercent != null ? s.taxPercent : 11; logoDraft = s.logoUrl || '';
     renderLogoDraft(); openDlg($('#dlg-store'));
-  });
+  }
+  $('#open-store').addEventListener('click', openStoreProfile);
+  $('#open-store-profile').addEventListener('click', () => { if ($('#dlg-stores').open) $('#dlg-stores').close(); openStoreProfile(); });
   $('#s-logo-remove').addEventListener('click', () => { logoDraft = ''; renderLogoDraft(); });
   $('#s-logo-file').addEventListener('change', async (e) => {
     const file = e.target.files[0]; e.target.value = '';
@@ -396,8 +471,32 @@
     try {
       S.store = await api('/api/store', { method: 'PUT', body: { name, address: $('#s-address').value.trim(), phone: $('#s-phone').value.trim(), logoUrl: logoDraft, taxPercent: dec($('#s-tax').value) } });
       S.taxPct = S.store.taxPercent; $('#tax-pct').value = String(S.taxPct);
+      const idx = S.stores.findIndex((s) => s.id === S.store.id);
+      if (idx >= 0) S.stores[idx] = Object.assign({}, S.stores[idx], S.store);
       renderBrand(); updateTotals(); $('#dlg-store').close(); toast('Profil toko disimpan');
     } catch (err) { setErr($('#dlg-store'), err.message); }
+  });
+
+  // ── Tambah toko ──
+  function openNewStore() {
+    $('#n-name').value = ''; $('#n-address').value = ''; $('#n-phone').value = ''; $('#n-tax').value = 11;
+    if ($('#dlg-stores').open) $('#dlg-stores').close();
+    openDlg($('#dlg-new-store'));
+  }
+  $('#form-new-store').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = $('#n-name').value.trim();
+    if (!name) return setErr($('#dlg-new-store'), 'Nama toko wajib diisi.');
+    try {
+      const created = await api('/api/stores', { method: 'POST', body: { name, address: $('#n-address').value.trim(), phone: $('#n-phone').value.trim(), taxPercent: dec($('#n-tax').value) } });
+      $('#dlg-new-store').close();
+      S.stores.push(created);
+      S.activeStoreId = created.id; saveStore(created.id);
+      S.cart = []; S.cat = 'Semua'; S.q = '';
+      renderShell();
+      toast('Toko ' + created.name + ' dibuat');
+      await loadStore(); loadProducts(); loadMovements();
+    } catch (err) { setErr($('#dlg-new-store'), err.message); }
   });
 
   // ── Struk ──
@@ -455,6 +554,7 @@
     const box = $('#report-body');
     if (S.reportState === 'loading') { box.innerHTML = skeletonRows(4); return; }
     if (S.reportState === 'error') { box.innerHTML = errorBox('Laporan penjualan', 'report'); return; }
+    if (!S.report) { box.innerHTML = ''; return; }
     const r = S.report; const m = r.summary;
     const stat = (label, value, note) => '<div class="flex flex-col gap-1 p-4"><dt class="text-small text-muted">' + label + '</dt><dd class="text-heading">' + value + '</dd>'
       + (note ? '<dd class="text-small text-muted">' + note + '</dd>' : '') + '</div>';
@@ -481,6 +581,7 @@
   // ── Tabs ──
   function setTab(tab) {
     if (!['kasir', 'stok', 'laporan'].includes(tab)) tab = 'kasir';
+    if (!hasStore()) tab = 'kasir';
     S.tab = tab;
     $$('[role=tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
     ['kasir', 'stok', 'laporan'].forEach((t) => { $('#tab-' + t).hidden = t !== tab; });
@@ -498,6 +599,7 @@
   $('#report-date').addEventListener('change', (e) => { if (e.target.value) { S.reportDate = e.target.value; loadReport(); } });
   $('#cart-clear').addEventListener('click', () => { S.cart = []; renderCart(); renderPos(); });
   $('#pay-btn').addEventListener('click', checkout);
+  $('#store-switch-btn').addEventListener('click', openStores);
 
   $('#disc-type').addEventListener('change', (e) => {
     S.discType = e.target.value; S.discValue = 0;
@@ -526,6 +628,7 @@
     const d = t.dataset;
     if (d.add) addToCart(Number(d.add));
     else if (d.cat) { S.cat = d.cat; renderPos(); }
+    else if (d.switch) setActiveStore(Number(d.switch));
     else if (d.remove) { S.cart = S.cart.filter((l) => l.id !== Number(d.remove)); renderCart(); renderPos(); }
     else if (d.inc || d.dec) {
       const line = S.cart.find((l) => l.id === Number(d.inc || d.dec));
@@ -537,15 +640,21 @@
     else if (d.quick) { S.paid = Number(d.quick); $('#cash-paid').value = String(S.paid); updateTotals(); }
     else if (d.adjust) openAdjust(Number(d.adjust));
     else if (d.edit) openProduct(Number(d.edit));
+    else if (t.hasAttribute('data-new-store')) openNewStore();
     else if (t.hasAttribute('data-new-product')) openProduct(null);
     else if (d.receipt) showReceipt(Number(d.receipt));
     else if (d.goto) goto(d.goto);
-    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport })[d.retry]();
+    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: loadStores })[d.retry]();
   });
 
   // ── Boot ──
   $('#report-date').value = S.reportDate;
-  renderBrand(); renderCart(); renderProducts();
-  setTab(location.hash.slice(1));
-  loadStore(); loadProducts();
+  renderCart(); renderProducts(); renderShell();
+  (async function boot() {
+    const anyStore = await loadStores();
+    if (!anyStore) { setTab('kasir'); renderBrand(); return; }
+    setTab(location.hash.slice(1));
+    await loadStore(); loadProducts(); loadMovements();
+    if (S.tab === 'laporan') loadReport();
+  })();
 })();
