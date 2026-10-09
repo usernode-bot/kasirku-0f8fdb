@@ -130,8 +130,20 @@
   <!-- Belum ada toko: shown instead of the tabs when the account owns no store. -->
   <section id="store-gate" class="mx-auto max-w-7xl px-4 py-5" hidden>
     <div class="state-empty mx-auto max-w-lg rounded-xl border border-line bg-surface">
+      <svg viewBox="0 0 96 96" class="h-24 w-24" aria-hidden="true" focusable="false">
+        <circle cx="48" cy="50" r="40" class="fill-raised"/>
+        <rect x="12" y="70" width="72" height="6" rx="3" class="fill-line"/>
+        <rect x="22" y="32" width="20" height="12" rx="2" class="fill-accent"/>
+        <path d="M16 48h32l3 22H13z" class="fill-accent"/>
+        <rect x="20" y="54" width="6" height="4" rx="1" class="fill-surface"/>
+        <rect x="29" y="54" width="6" height="4" rx="1" class="fill-surface"/>
+        <rect x="38" y="54" width="6" height="4" rx="1" class="fill-surface"/>
+        <path d="M68 40l13 7.5v15L68 70l-13-7.5v-15z" class="fill-surface stroke-accent" stroke-width="2" stroke-linejoin="round"/>
+        <path d="M55 47.5l13 7.5 13-7.5M68 55v15" fill="none" class="stroke-accent" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
       <p class="text-heading">Belum ada toko</p>
       <p class="text-body text-muted">Buat toko pertama Anda untuk mulai mencatat penjualan, stok dan laporan.</p>
+      <p class="text-body text-muted">Cukup 1 menit: isi nama toko, lalu langsung mulai berjualan.</p>
       <button type="button" class="btn-primary" data-new-store>Buat toko</button>
     </div>
   </section>
