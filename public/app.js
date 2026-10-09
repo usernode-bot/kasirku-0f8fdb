@@ -168,6 +168,12 @@
     sub.textContent = '';
     sub.hidden = true;
     $('#store-switch-btn').textContent = (name || 'Pilih toko') + ' ▾';
+    // Until the account owns a store, the header keeps only the brand: the
+    // gate card's "Buat toko" is the one action. Both buttons stay hidden
+    // while the store list loads or fails, since S.stores is empty then too.
+    const noStores = S.stores.length === 0;
+    $('#store-switch-btn').hidden = noStores;
+    $('#open-store').hidden = noStores;
   }
 
   // ── Store switcher ──
