@@ -7,5 +7,35 @@
   "visibility": {
     "build": "public",
     "view": "public"
-  }
+  },
+  "tests": [
+    {
+      "name": "Sell screen loads",
+      "path": "/",
+      "assert": { "expectSelector": "[data-view=\"sell\"]" }
+    },
+    {
+      "name": "Sell screen, demo shop",
+      "id": "sell.demo",
+      "visual": true,
+      "impact": ["public/**", "server.js", "styles/**", "tailwind.config.js"],
+      "path": "/?demo=1",
+      "assert": { "expectText": "Staging demo shop" }
+    },
+    {
+      "name": "Products screen, demo shop",
+      "path": "/?demo=1#/products",
+      "assert": { "expectText": "Tax rate" }
+    },
+    {
+      "name": "Sales list, demo shop",
+      "path": "/?demo=1#/sales",
+      "assert": { "expectSelector": "[data-view=\"sales\"] .list-row" }
+    },
+    {
+      "name": "Receipt, demo sale",
+      "path": "/?demo=1#/sales/900001",
+      "assert": { "expectSelector": ".receipt" }
+    }
+  ]
 }

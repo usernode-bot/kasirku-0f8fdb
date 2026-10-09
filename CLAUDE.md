@@ -97,24 +97,38 @@ tables you've marked private), etc.
 
 ## About KasirKU
 
-A simple cashier app for your shop's sales
-
-_(add a sentence or two more of product context here so Claude Code has a
-shared understanding of what this app is for)_
+A point-of-sale (cashier) app for a small shop: record product sales, keep
+inventory stock up to date, calculate bills with tax, and keep a printable
+receipt for every sale. Three screens — Sell (the till), Products (catalogue
+and stock) and Sales (receipts). One shared shop: everyone sees and changes
+the same products, stock and sales; any signed-in member can sell, add and
+edit products, and change the tax rate. The app is public, so visitors
+without an account can look around and build a bill; saving needs an
+account.
 
 ## Design
 
-This app's look. The first real version fills in the blanks; every later
-change follows it, and updates it when a request changes the look on purpose.
+This app's look. Every later change follows it, and updates it when a
+request changes the look on purpose.
 
-- **Palette:** _(name the accent, any second colour and the neutrals, e.g.
-  "accent: tomato red; second: basil green; neutrals: warm greys")_
-- **Signature element:** _(the one thing on screen drawn from this app's
-  subject, which no other app would have)_
+- **Palette:** a deep banknote blue (`accent`) for actions and the selected
+  tab, cool grey neutrals (`ground`/`surface`/`raised`/`line`), and a burnt
+  orange (`warn`) reserved for stock warnings — "Low stock" and "Sold out"
+  only.
+- **Signature element:** the bill and the receipt are drawn as till paper —
+  an off-white sheet (`.paper`, token `paper`), typewriter-style monospace
+  lettering, dashed rules between sections (`.paper-rule`) and a torn zigzag
+  bottom edge (`.paper-edge`). The bill on Sell is the same paper as the
+  receipt, so the receipt is visibly the bill you were building. Printing a
+  receipt forces the light token values so the paper prints white with dark
+  ink.
 - **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
-  _(change their sizes in `tailwind.config.js` if you must, not their number)_
-- **One fixed look:** _(only for an app drawn as its own scene, such as a
-  game: which look, and why. Otherwise delete this line.)_
+  (unchanged). System UI stack everywhere; the system monospace stack only
+  on the paper.
+- Navigation is three tabs — Sell, Products, Sales — bottom bar on phones,
+  a row in the header from `sm:` up; the active tab takes the accent and a
+  bar on its edge (`.tab[aria-current='page']`).
+- Money is always written "Rp 12.500".
 
 The kit is in `styles/tailwind-input.css`: colour tokens with a light and
 a dark value (named in `tailwind.config.js`), and a few components
@@ -139,6 +153,17 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- Money is whole rupiah integers, never floats. The tax rate is basis
+  points in `settings.tax_rate_bp` (1100 = 11%); tax is
+  `Math.round(subtotal * rate / 10000)`.
+- `sale_items` snapshots the product's name and unit price at sale time, so
+  price or name edits change future sales only.
+- Products are never deleted (old receipts keep their items); setting stock
+  to 0 takes a product off sale.
+- `sales` and `sale_items` are financial data and carry
+  `COMMENT ON TABLE … 'staging:private'`, so the platform's staging copy of
+  the shop never includes them; the staging demo (`?demo=1`, seeded at
+  request time on staging only) shows made-up products and sales instead.
+- Checkout quantities and prices are read from the database under row locks
+  (`SELECT … FOR UPDATE`), never trusted from the page.
+- `created_at` values come from `req.now`, never SQL `NOW()`.

@@ -18,41 +18,43 @@
  * bg-accent with text-on-accent, ...). :root is the light look, and .dark,
  * which the theme script in public/index.html sets on <html>, the dark one.
  *
- * Re-theme the app HERE: change the values, keep the names. The defaults
- * (warm greys, one teal accent) are a quiet starting point, not a look.
- * Keep every text pair at 4.5:1 or more in both looks: fg and muted on
- * ground, surface and raised; accent and danger on ground and surface;
- * on-accent on accent; on-danger on danger.
- *
- * Adopting the native UI kit later? Point its --un-accent and
- * --un-accent-contrast at the accent and on-accent tokens.
+ * KasirKU's palette: a deep banknote blue for actions and the selected tab,
+ * cool grey neutrals, and a burnt orange reserved for stock warnings
+ * ("Low stock", "Sold out"). --paper is the off-white till paper the bill
+ * and receipt are drawn on. Keep every text pair at 4.5:1 or more in both
+ * looks: fg and muted on ground, surface, raised and paper; accent and warn
+ * on ground, surface and paper; on-accent on accent; on-danger on danger.
  */
 @layer base {
   :root {
-    --ground: 250 250 249;    /* the page */
+    --ground: 246 247 249;    /* the page */
     --surface: 255 255 255;   /* lists, cards, fields */
-    --raised: 245 245 244;    /* hovers, badges */
-    --fg: 28 25 23;           /* text */
-    --muted: 87 83 78;        /* secondary text */
-    --line: 231 229 228;      /* borders, dividers, skeletons */
-    --accent: 15 118 110;     /* the one accent */
+    --raised: 237 240 244;    /* hovers, badges */
+    --fg: 17 24 39;           /* text */
+    --muted: 75 85 99;        /* secondary text */
+    --line: 220 225 232;      /* borders, dividers, skeletons */
+    --accent: 30 64 175;      /* the one accent: actions, selected tab */
     --on-accent: 255 255 255; /* text on the accent */
     --danger: 185 28 28;
     --on-danger: 255 255 255;
-    --focus: 13 148 136;      /* the keyboard focus ring */
+    --warn: 154 52 18;        /* low stock, sold out */
+    --paper: 255 253 247;     /* till paper: bill and receipt */
+    --focus: 37 99 235;       /* the keyboard focus ring */
   }
   .dark {
-    --ground: 12 10 9;
-    --surface: 28 25 23;
-    --raised: 41 37 36;
-    --fg: 245 245 244;
-    --muted: 168 162 158;
-    --line: 68 64 60;
-    --accent: 45 212 191;
-    --on-accent: 4 47 46;
+    --ground: 13 17 23;
+    --surface: 22 27 34;
+    --raised: 33 39 48;
+    --fg: 236 239 243;
+    --muted: 156 163 175;
+    --line: 51 59 71;
+    --accent: 147 197 253;
+    --on-accent: 23 37 84;
     --danger: 248 113 113;
     --on-danger: 69 10 10;
-    --focus: 94 234 212;
+    --warn: 253 186 116;
+    --paper: 30 34 41;
+    --focus: 147 197 253;
   }
   /* el.hidden = true hides an element even when a class gives it a display
      (flex, the components below). */
@@ -62,10 +64,10 @@
 }
 
 /* ── Components ───────────────────────────────────────────────────────────
- * A small starting kit on the tokens. Use these rather than restyling the
- * same thing by hand, add to them sparingly, and change a component here
- * rather than one copy of it. Type: text-title, text-heading, text-body and
- * text-small (tailwind.config.js), nothing in between.
+ * A small kit on the tokens. Use these rather than restyling the same thing
+ * by hand, add to them sparingly, and change a component here rather than
+ * one copy of it. Type: text-title, text-heading, text-body and text-small
+ * (tailwind.config.js), nothing in between.
  */
 @layer components {
   /* Buttons: one primary per screen, the rest secondary. At least 44 px
@@ -99,6 +101,10 @@
   .list-row {
     @apply flex min-h-11 items-center gap-3 px-4 py-3;
   }
+  a.list-row,
+  button.list-row {
+    @apply w-full text-left hover:bg-raised;
+  }
 
   /* A card: one self-contained thing, usually something you tap. Most
      screens need none. Never put a card inside a card or a .list. */
@@ -124,5 +130,114 @@
   .state-empty,
   .state-error {
     @apply flex flex-col items-center gap-2 px-4 py-8 text-center;
+  }
+
+  /* A product tile on the Sell screen: a button you tap to add one to the
+     bill. `.tile-on` marks a product that is on the open bill. */
+  .tile {
+    @apply flex min-h-11 flex-col items-start justify-between gap-2 rounded-xl border border-line bg-surface p-3 text-left
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2
+      focus-visible:ring-offset-ground disabled:cursor-not-allowed disabled:opacity-60;
+    min-height: 96px;
+  }
+  .tile-on {
+    @apply border-accent ring-1 ring-accent;
+  }
+
+  /* Tabs: the app's three screens. A bottom bar on phones, a row in the
+     header from sm: up; the active one takes the accent and a bar on the
+     edge it sits against. */
+  .tab {
+    @apply flex min-h-11 flex-1 items-center justify-center px-3 text-small font-medium text-muted
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus;
+  }
+  .tab[aria-current='page'] {
+    color: rgb(var(--accent));
+    box-shadow: inset 0 3px 0 rgb(var(--accent));
+  }
+  @media (min-width: 640px) {
+    .tab {
+      @apply flex-none rounded-lg;
+    }
+    .tab[aria-current='page'] {
+      box-shadow: inset 0 -3px 0 rgb(var(--accent));
+    }
+  }
+
+  /* Till paper: the bill on Sell and the receipt on Sales, drawn as one
+     continuous sheet — same paper, same typewriter lettering, dashed rules
+     between sections, and a torn zigzag bottom edge (.paper-edge). */
+  .paper {
+    @apply text-small leading-5 text-fg;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: rgb(var(--paper));
+    border: 1px solid rgb(var(--line));
+    border-bottom: 0;
+  }
+  .paper-rule {
+    @apply border-t border-dashed;
+    border-color: rgb(var(--muted));
+  }
+  /* The torn edge: two repeating gradients leave a zigzag of transparent
+     notches, so the sheet above appears torn. Colour from the paper token,
+     so it works in both looks. */
+  .paper-edge {
+    height: 10px;
+    background:
+      linear-gradient(-45deg, transparent 7px, rgb(var(--paper)) 0) 0 0 / 14px 10px repeat-x,
+      linear-gradient(45deg, transparent 7px, rgb(var(--paper)) 0) 0 0 / 14px 10px repeat-x;
+  }
+
+  /* The bill's quantity steppers sit on paper: same 44 px target, lighter
+     chrome than a .btn-secondary. */
+  .step-btn {
+    @apply inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-line bg-surface text-body text-fg
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  /* A sheet (the phone bill, a form) answering the tap that opened it. */
+  .sheet-in {
+    animation: sheet-up 0.2s ease-out;
+  }
+}
+@keyframes sheet-up {
+  from { transform: translateY(12px); opacity: 0.6; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet-in {
+    animation: none;
+  }
+}
+
+/* Printing a receipt: only the receipt sheet reaches the page, on plain
+   white paper with dark ink, whatever the screen look was. Forcing the
+   light token values keeps the paper's own colours right inside .receipt. */
+@media print {
+  :root, .dark {
+    --paper: 255 255 255;
+    --fg: 17 24 39;
+    --muted: 75 85 99;
+    --line: 220 225 232;
+  }
+  body {
+    background: #fff !important;
+  }
+  body * {
+    visibility: hidden;
+  }
+  .receipt, .receipt * {
+    visibility: visible;
+  }
+  .receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0 !important;
+    border: 0;
+  }
+  .paper-edge {
+    display: none;
   }
 }

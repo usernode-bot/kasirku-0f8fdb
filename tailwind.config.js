@@ -54,7 +54,15 @@ module.exports = {
         'on-accent': token('on-accent'), // text on the accent
         danger: token('danger'),
         'on-danger': token('on-danger'),
+        warn: token('warn'), // low stock, sold out
+        paper: token('paper'), // till paper: the bill and the receipt
         focus: token('focus'), // the keyboard focus ring
+      },
+      // Typefaces: the system UI stack everywhere, and the system monospace
+      // stack only on the till paper (.paper).
+      fontFamily: {
+        sans: ['system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
       },
       // The type scale: four sizes, and nothing in between.
       fontSize: {
