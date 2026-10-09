@@ -130,8 +130,21 @@
   <!-- Belum ada toko: shown instead of the tabs when the account owns no store. -->
   <section id="store-gate" class="mx-auto max-w-7xl px-4 py-5" hidden>
     <div class="state-empty mx-auto max-w-lg rounded-xl border border-line bg-surface">
+      <svg viewBox="0 0 96 96" class="h-24 w-24" aria-hidden="true" focusable="false">
+        <circle cx="48" cy="50" r="40" class="fill-raised"/>
+        <rect x="40" y="26" width="12" height="24" rx="1.5" class="fill-surface stroke-line" stroke-width="1.5"/>
+        <path d="M43 32h6M43 37h6M43 42h6" class="stroke-muted" stroke-width="1" stroke-dasharray="2 1.5"/>
+        <rect x="20" y="38" width="16" height="12" rx="2" class="fill-accent"/>
+        <path d="M14 52h44l3 24H11z" class="fill-accent"/>
+        <rect x="18" y="58" width="6" height="4" rx="1" class="fill-on-accent"/>
+        <rect x="27" y="58" width="6" height="4" rx="1" class="fill-on-accent"/>
+        <rect x="36" y="58" width="6" height="4" rx="1" class="fill-on-accent"/>
+        <path d="M74 46l12 7v14l-12 7-12-7V53z" class="fill-surface stroke-accent" stroke-width="2" stroke-linejoin="round"/>
+        <path d="M62 53l12 7 12-7M74 60v14" class="stroke-accent" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
       <p class="text-heading">Belum ada toko</p>
       <p class="text-body text-muted">Buat toko pertama Anda untuk mulai mencatat penjualan, stok dan laporan.</p>
+      <p class="text-body text-muted">Cukup 1 menit: isi nama toko, lalu langsung mulai berjualan.</p>
       <button type="button" class="btn-primary" data-new-store>Buat toko</button>
     </div>
   </section>
