@@ -1,6 +1,8 @@
-// KasirKU API: store profile, product catalog, stock adjustments, sales and
-// reports. All money is stored as whole rupiah (integers). The server always
-// recomputes totals, stock and cost of goods from its own data.
+// KasirKU API: stores (owned per Homeroom account), product catalog, stock
+// adjustments, sales and reports. Every business row belongs to one store and
+// every read/write is scoped to the caller's active store. All money is stored
+// as whole rupiah (integers). The server always recomputes totals, stock and
+// cost of goods from its own data.
 const TZ = 'Asia/Jakarta';
 const PAYMENT_METHODS = ['cash', 'qris', 'debit', 'transfer'];
 const MOVEMENT_TYPES = ['restock', 'return', 'opname'];
@@ -23,21 +25,31 @@ function text(v, label, { max = 200, required = false } = {}) {
 }
 const h = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
+// ── Schema ──
+// `stores` is the tenant: one row per store, owned by the Homeroom account
+// that created it (`owner_id` = req.user.id). Every business table carries a
+// `store_id` and every query filters on it. All of these tables are marked
+// staging:private (inventory, contact details and financial records), so
+// staging copies their schema only and the IS_STAGING seed below fills them.
 const SCHEMA = `
-CREATE TABLE IF NOT EXISTS store_profile (
-  id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+CREATE TABLE IF NOT EXISTS stores (
+  id SERIAL PRIMARY KEY,
+  owner_id INT,
   name TEXT NOT NULL DEFAULT 'KasirKU',
   address TEXT NOT NULL DEFAULT '',
   phone TEXT NOT NULL DEFAULT '',
   logo_url TEXT NOT NULL DEFAULT '',
-  tax_percent NUMERIC(5,2) NOT NULL DEFAULT 11
+  tax_percent NUMERIC(5,2) NOT NULL DEFAULT 11,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-INSERT INTO store_profile (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+CREATE INDEX IF NOT EXISTS stores_owner_idx ON stores (owner_id);
+COMMENT ON TABLE stores IS 'staging:private';
 
 CREATE TABLE IF NOT EXISTS products (
   id SERIAL PRIMARY KEY,
+  store_id INT REFERENCES stores(id),
   name TEXT NOT NULL,
-  sku TEXT NOT NULL UNIQUE,
+  sku TEXT NOT NULL,
   category TEXT NOT NULL DEFAULT 'Umum',
   cost_price INT NOT NULL DEFAULT 0,
   sell_price INT NOT NULL DEFAULT 0,
@@ -46,9 +58,11 @@ CREATE TABLE IF NOT EXISTS products (
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+COMMENT ON TABLE products IS 'staging:private';
 
 CREATE TABLE IF NOT EXISTS stock_movements (
   id SERIAL PRIMARY KEY,
+  store_id INT REFERENCES stores(id),
   product_id INT NOT NULL REFERENCES products(id),
   type TEXT NOT NULL,
   qty_change INT NOT NULL,
@@ -58,10 +72,12 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   actor TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+COMMENT ON TABLE stock_movements IS 'staging:private';
 
 CREATE SEQUENCE IF NOT EXISTS invoice_seq;
 CREATE TABLE IF NOT EXISTS sales (
   id SERIAL PRIMARY KEY,
+  store_id INT REFERENCES stores(id),
   invoice_no TEXT NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   cashier TEXT NOT NULL DEFAULT '',
@@ -79,6 +95,7 @@ CREATE TABLE IF NOT EXISTS sales (
 );
 CREATE TABLE IF NOT EXISTS sale_items (
   id SERIAL PRIMARY KEY,
+  store_id INT REFERENCES stores(id),
   sale_id INT NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
   product_id INT REFERENCES products(id),
   name TEXT NOT NULL,
@@ -88,12 +105,64 @@ CREATE TABLE IF NOT EXISTS sale_items (
   price INT NOT NULL,
   cost_price INT NOT NULL DEFAULT 0
 );
--- Sales are financial records: staging gets the structure without the rows.
+-- Sales and their stores are financial records: staging gets the structure
+-- without the rows.
 COMMENT ON TABLE sales IS 'staging:private';
 COMMENT ON TABLE sale_items IS 'staging:private';
+
+-- Additive migration for databases created before the multi-store change.
+ALTER TABLE products ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(id);
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(id);
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(id);
+ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(id);
 `;
 
-// Obviously fake demo shop for staging previews. Idempotent.
+// One-time legacy migration: the old single-shop `store_profile` row (id = 1)
+// becomes a store, and every existing business row is attached to it. The
+// migrated store keeps owner_id NULL (it belongs to nobody) so no account can
+// see the pre-existing shared rows; the rows are preserved, never deleted.
+async function migrateLegacyStore(pool) {
+  const { rows } = await pool.query(
+    `SELECT to_regclass('public.store_profile') IS NOT NULL AS present`);
+  if (!rows[0].present) return;
+  await pool.query(
+    `INSERT INTO stores (id, owner_id, name, address, phone, logo_url, tax_percent)
+     SELECT 1, NULL, name, address, phone, logo_url, tax_percent FROM store_profile WHERE id = 1
+     ON CONFLICT (id) DO NOTHING`);
+  for (const t of ['products', 'stock_movements', 'sales', 'sale_items']) {
+    await pool.query(`UPDATE ${t} SET store_id = 1 WHERE store_id IS NULL`);
+  }
+  await pool.query('DROP TABLE store_profile');
+  await pool.query(
+    `SELECT setval(pg_get_serial_sequence('stores','id'), GREATEST((SELECT MAX(id) FROM stores), 1))`);
+}
+
+// SKU is unique per store, not per app. Drop the old global unique constraint
+// (which came with the CREATE TABLE) and replace it with a per-store index.
+// Runs only when the legacy constraint is still present.
+async function migrateSkuUnique(pool) {
+  const { rows } = await pool.query(
+    `SELECT con.conname, array_agg(att.attname) AS cols
+       FROM pg_constraint con
+       JOIN pg_class rel ON rel.oid = con.conrelid
+       JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = ANY (con.conkey)
+      WHERE rel.relname = 'products' AND con.contype = 'u'
+        AND array_length(con.conkey, 1) = 1
+        AND (SELECT attname FROM pg_attribute WHERE attrelid = con.conrelid AND attnum = con.conkey[1]) = 'sku'
+      GROUP BY con.conname`);
+  for (const r of rows) {
+    await pool.query(`ALTER TABLE products DROP CONSTRAINT IF EXISTS "${r.conname}"`);
+  }
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS products_store_sku_uniq ON products (store_id, sku)`);
+}
+
+// Obviously fake demo shop for staging previews. Idempotent. Rows belong to a
+// fixed fake owner, never the visitor, so the signed-in reviewer still sees the
+// honest "Belum ada toko" screen and can create their own stores.
+const DEMO_OWNER_ID = 900001;
+const DEMO_STORE_1 = 900001;
+const DEMO_STORE_2 = 900002;
 const DEMO_PRODUCTS = [
   ['DEMO-001', 'Beras Premium 5 kg', 'Sembako', 58000, 68000, 24, 6],
   ['DEMO-002', 'Minyak Goreng 2 L', 'Sembako', 32000, 37500, 18, 6],
@@ -112,15 +181,22 @@ const DEMO_PRODUCTS = [
 ];
 
 async function seedDemo(pool) {
+  await pool.query(
+    `INSERT INTO stores (id, owner_id, name, address, phone, tax_percent)
+     VALUES ($1, $2, 'Staging demo Toko Contoh Sejahtera', 'Jl. Contoh No. 12, Jakarta', '021-5550123', 11)
+     ON CONFLICT (id) DO NOTHING`, [DEMO_STORE_1, DEMO_OWNER_ID]);
+  await pool.query(
+    `INSERT INTO stores (id, owner_id, name, address, phone, tax_percent)
+     VALUES ($1, $2, 'Staging demo Cabang Melati', 'Jl. Melati No. 5, Bandung', '022-7770456', 11)
+     ON CONFLICT (id) DO NOTHING`, [DEMO_STORE_2, DEMO_OWNER_ID]);
+  await pool.query(
+    `SELECT setval(pg_get_serial_sequence('stores','id'), GREATEST((SELECT MAX(id) FROM stores), 1))`);
   for (const [sku, name, category, cost, sell, stock, min] of DEMO_PRODUCTS) {
     await pool.query(
-      `INSERT INTO products (sku, name, category, cost_price, sell_price, stock, min_stock)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (sku) DO NOTHING`,
-      [sku, name, category, cost, sell, stock, min]);
+      `INSERT INTO products (store_id, sku, name, category, cost_price, sell_price, stock, min_stock)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (store_id, sku) DO NOTHING`,
+      [DEMO_STORE_1, sku, name, category, cost, sell, stock, min]);
   }
-  await pool.query(
-    `UPDATE store_profile SET name = 'Toko Contoh Sejahtera', address = 'Jl. Contoh No. 12, Jakarta',
-     phone = '021-5550123' WHERE id = 1 AND name = 'KasirKU' AND address = ''`);
   const demoSales = [
     ['DEMO-INV-001', 'cash', 100000, [['DEMO-001', 1], ['DEMO-005', 2]], '30 minutes'],
     ['DEMO-INV-002', 'qris', 0, [['DEMO-006', 3], ['DEMO-009', 5]], '20 minutes'],
@@ -128,8 +204,8 @@ async function seedDemo(pool) {
   ];
   for (const [inv, method, cash, lines, ago] of demoSales) {
     const { rows } = await pool.query(
-      `SELECT sku, name, sell_price, cost_price, id FROM products WHERE sku = ANY($1)`,
-      [lines.map((l) => l[0])]);
+      `SELECT sku, name, sell_price, cost_price, id FROM products WHERE store_id = $1 AND sku = ANY($2)`,
+      [DEMO_STORE_1, lines.map((l) => l[0])]);
     const by = Object.fromEntries(rows.map((r) => [r.sku, r]));
     if (lines.some((l) => !by[l[0]])) continue;
     let subtotal = 0; let cogs = 0;
@@ -137,19 +213,19 @@ async function seedDemo(pool) {
     const tax = Math.round(subtotal * 0.11);
     const total = subtotal + tax;
     const ins = await pool.query(
-      `INSERT INTO sales (invoice_no, created_at, cashier, subtotal, tax_percent, tax_amount, total, cogs,
+      `INSERT INTO sales (store_id, invoice_no, created_at, cashier, subtotal, tax_percent, tax_amount, total, cogs,
          payment_method, paid, change_amount)
-       VALUES ($1, NOW() - $2::interval, 'staging-demo-kasir', $3, 11, $4, $5, $6, $7, $8, $9)
+       VALUES ($1, $2, NOW() - $3::interval, 'staging-demo-kasir', $4, 11, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (invoice_no) DO NOTHING RETURNING id`,
-      [inv, ago, subtotal, tax, total, cogs, method, method === 'cash' ? Math.max(cash, total) : total,
+      [DEMO_STORE_1, inv, ago, subtotal, tax, total, cogs, method, method === 'cash' ? Math.max(cash, total) : total,
         method === 'cash' ? Math.max(cash, total) - total : 0]);
     if (!ins.rows.length) continue;
     for (const [sku, qty] of lines) {
       const p = by[sku];
       await pool.query(
-        `INSERT INTO sale_items (sale_id, product_id, name, sku, qty, list_price, price, cost_price)
-         VALUES ($1,$2,$3,$4,$5,$6,$6,$7)`,
-        [ins.rows[0].id, p.id, p.name, p.sku, qty, p.sell_price, p.cost_price]);
+        `INSERT INTO sale_items (store_id, sale_id, product_id, name, sku, qty, list_price, price, cost_price)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$7,$8)`,
+        [DEMO_STORE_1, ins.rows[0].id, p.id, p.name, p.sku, qty, p.sell_price, p.cost_price]);
     }
   }
 }
@@ -159,6 +235,8 @@ function mountApi({ app, pool, IS_STAGING }) {
 
   async function migrate() {
     await pool.query(SCHEMA);
+    await migrateLegacyStore(pool);
+    await migrateSkuUnique(pool);
     if (IS_STAGING) await seedDemo(pool);
   }
 
@@ -169,8 +247,8 @@ function mountApi({ app, pool, IS_STAGING }) {
     low: r.stock < r.min_stock, out: r.stock <= 0,
   });
   const storeRow = (r) => ({
-    name: r.name, address: r.address, phone: r.phone, logoUrl: r.logo_url, taxPercent: Number(r.tax_percent),
-    staging: IS_STAGING,
+    id: r.id, name: r.name, address: r.address, phone: r.phone, logoUrl: r.logo_url,
+    taxPercent: Number(r.tax_percent), staging: IS_STAGING,
   });
   const saleRow = (r) => ({
     id: r.id, invoiceNo: r.invoice_no, createdAt: r.created_at, cashier: r.cashier, subtotal: r.subtotal,
@@ -179,13 +257,48 @@ function mountApi({ app, pool, IS_STAGING }) {
     paymentMethod: r.payment_method, paid: r.paid, change: r.change_amount,
   });
 
-  // ── Store profile ──
-  app.get('/api/store', h(async (_req, res) => {
-    const { rows } = await pool.query('SELECT * FROM store_profile WHERE id = 1');
-    res.json(storeRow(rows[0]));
+  // ── Active store ──
+  // Resolves the store this request works in. The caller names it with the
+  // `x-usernode-store` header (or `?store=` on a GET); a named store is only
+  // accepted when the caller owns it. Otherwise the caller's oldest store is
+  // used, and a caller who owns none (or a guest) gets null, so store-scoped
+  // routes answer honestly (an empty list) instead of erroring.
+  function requestedStoreId(req) {
+    const raw = req.headers['x-usernode-store'] || (req.method === 'GET' ? req.query.store : null);
+    if (typeof raw !== 'string' || !/^\d+$/.test(raw.trim())) return null;
+    const n = Number(raw.trim());
+    return Number.isInteger(n) && n > 0 && n <= 2000000000 ? n : null;
+  }
+  async function resolveActiveStore(req) {
+    const wanted = requestedStoreId(req);
+    const owner = req.user && req.user.id != null ? req.user.id : null;
+    if (owner == null) return null;
+    if (wanted != null) {
+      const { rows } = await pool.query('SELECT * FROM stores WHERE id = $1 AND owner_id = $2', [wanted, owner]);
+      if (rows.length) return rows[0];
+    }
+    const { rows } = await pool.query('SELECT * FROM stores WHERE owner_id = $1 ORDER BY id LIMIT 1', [owner]);
+    return rows[0] || null;
+  }
+
+  // Resolve the active store once per request, before any route handler. A
+  // route that needs it reads `req.store`; when it is null the route answers
+  // its honest empty result.
+  app.use('/api', h(async (req, _res, next) => {
+    req.store = await resolveActiveStore(req);
+    next();
   }));
-  app.put('/api/store', h(async (req, res) => {
-    const b = req.body || {};
+
+  // ── Stores ──
+  app.get('/api/stores', h(async (req, res) => {
+    const owner = req.user && req.user.id != null ? req.user.id : null;
+    if (owner == null) return res.json({ stores: [], activeId: null });
+    const { rows } = await pool.query('SELECT * FROM stores WHERE owner_id = $1 ORDER BY id', [owner]);
+    const active = req.store;
+    res.json({ stores: rows.map(storeRow), activeId: active ? active.id : null });
+  }));
+
+  function readStore(b) {
     const name = text(b.name, 'Nama toko', { max: 80, required: true });
     const address = text(b.address, 'Alamat', { max: 200 });
     const phone = text(b.phone, 'Telepon', { max: 40 });
@@ -193,15 +306,40 @@ function mountApi({ app, pool, IS_STAGING }) {
     if (logoUrl && !/^(https?:\/\/|\/)/.test(logoUrl)) throw bad('Logo tidak valid');
     const tax = Number(b.taxPercent);
     if (!Number.isFinite(tax) || tax < 0 || tax > 100) throw bad('PPN harus antara 0 dan 100');
+    return { name, address, phone, logoUrl, tax };
+  }
+
+  app.post('/api/stores', h(async (req, res) => {
+    const s = readStore(req.body || {});
+    const owner = req.user && req.user.id != null ? req.user.id : null;
+    if (owner == null) throw new HttpError(401, 'account_required');
     const { rows } = await pool.query(
-      `UPDATE store_profile SET name=$1, address=$2, phone=$3, logo_url=$4, tax_percent=$5 WHERE id=1 RETURNING *`,
-      [name, address, phone, logoUrl, tax]);
+      `INSERT INTO stores (owner_id, name, address, phone, logo_url, tax_percent)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [owner, s.name, s.address, s.phone, s.logoUrl, s.tax]);
+    res.status(201).json(storeRow(rows[0]));
+  }));
+
+  // ── Store profile (the active store) ──
+  app.get('/api/store', h(async (req, res) => {
+    if (!req.store) return res.json(null);
+    res.json(storeRow(req.store));
+  }));
+  app.put('/api/store', h(async (req, res) => {
+    if (!req.store) throw new HttpError(404, 'Toko tidak ditemukan');
+    const s = readStore(req.body || {});
+    const { rows } = await pool.query(
+      `UPDATE stores SET name=$1, address=$2, phone=$3, logo_url=$4, tax_percent=$5
+       WHERE id=$6 RETURNING *`,
+      [s.name, s.address, s.phone, s.logoUrl, s.tax, req.store.id]);
     res.json(storeRow(rows[0]));
   }));
 
   // ── Products ──
-  app.get('/api/products', h(async (_req, res) => {
-    const { rows } = await pool.query('SELECT * FROM products WHERE active ORDER BY name');
+  app.get('/api/products', h(async (req, res) => {
+    if (!req.store) return res.json({ products: [] });
+    const { rows } = await pool.query(
+      'SELECT * FROM products WHERE active AND store_id = $1 ORDER BY name', [req.store.id]);
     res.json({ products: rows.map(productRow) });
   }));
 
@@ -218,19 +356,21 @@ function mountApi({ app, pool, IS_STAGING }) {
   const dupSku = (e) => (e.code === '23505' ? new HttpError(409, 'SKU / barcode sudah dipakai produk lain') : e);
 
   app.post('/api/products', h(async (req, res) => {
+    if (!req.store) throw new HttpError(404, 'Toko tidak ditemukan');
+    const storeId = req.store.id;
     const p = readProduct(req.body || {});
     const stock = int((req.body || {}).stock ?? 0, 'Stok awal');
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const { rows } = await client.query(
-        `INSERT INTO products (name, sku, category, cost_price, sell_price, stock, min_stock)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-        [p.name, p.sku, p.category, p.cost, p.sell, stock, p.min]);
+        `INSERT INTO products (store_id, name, sku, category, cost_price, sell_price, stock, min_stock)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [storeId, p.name, p.sku, p.category, p.cost, p.sell, stock, p.min]);
       if (stock > 0) {
         await client.query(
-          `INSERT INTO stock_movements (product_id, type, qty_change, stock_after, note, actor)
-           VALUES ($1,'restock',$2,$2,'Stok awal',$3)`, [rows[0].id, stock, actor(req)]);
+          `INSERT INTO stock_movements (store_id, product_id, type, qty_change, stock_after, note, actor)
+           VALUES ($1,$2,'restock',$3,$3,'Stok awal',$4)`, [storeId, rows[0].id, stock, actor(req)]);
       }
       await client.query('COMMIT');
       res.status(201).json(productRow(rows[0]));
@@ -242,12 +382,13 @@ function mountApi({ app, pool, IS_STAGING }) {
 
   // Stock is changed only through adjustments and sales, never by editing.
   app.put('/api/products/:id', h(async (req, res) => {
+    if (!req.store) throw new HttpError(404, 'Produk tidak ditemukan');
     const p = readProduct(req.body || {});
     try {
       const { rows } = await pool.query(
         `UPDATE products SET name=$1, sku=$2, category=$3, cost_price=$4, sell_price=$5, min_stock=$6
-         WHERE id=$7 AND active RETURNING *`,
-        [p.name, p.sku, p.category, p.cost, p.sell, p.min, int(req.params.id, 'ID')]);
+         WHERE id=$7 AND active AND store_id=$8 RETURNING *`,
+        [p.name, p.sku, p.category, p.cost, p.sell, p.min, int(req.params.id, 'ID'), req.store.id]);
       if (!rows.length) throw new HttpError(404, 'Produk tidak ditemukan');
       res.json(productRow(rows[0]));
     } catch (e) { throw dupSku(e); }
@@ -255,9 +396,11 @@ function mountApi({ app, pool, IS_STAGING }) {
 
   // Soft delete: past receipts keep their lines.
   app.delete('/api/products/:id', h(async (req, res) => {
+    if (!req.store) throw new HttpError(404, 'Produk tidak ditemukan');
     const { rowCount } = await pool.query(
-      `UPDATE products SET active = FALSE, sku = sku || '#' || id WHERE id = $1 AND active`,
-      [int(req.params.id, 'ID')]);
+      `UPDATE products SET active = FALSE, sku = sku || '#' || id
+       WHERE id = $1 AND active AND store_id = $2`,
+      [int(req.params.id, 'ID'), req.store.id]);
     if (!rowCount) throw new HttpError(404, 'Produk tidak ditemukan');
     res.json({ ok: true });
   }));
@@ -265,6 +408,8 @@ function mountApi({ app, pool, IS_STAGING }) {
   // restock: qty added. return: qty sent back to the supplier, removed.
   // opname: qty is the physical count; stock is set to it.
   app.post('/api/products/:id/adjust', h(async (req, res) => {
+    if (!req.store) throw new HttpError(404, 'Produk tidak ditemukan');
+    const storeId = req.store.id;
     const b = req.body || {};
     if (!MOVEMENT_TYPES.includes(b.type)) throw bad('Jenis penyesuaian tidak valid');
     const qty = int(b.qty, b.type === 'opname' ? 'Stok fisik' : 'Jumlah', { min: b.type === 'opname' ? 0 : 1 });
@@ -272,15 +417,17 @@ function mountApi({ app, pool, IS_STAGING }) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const cur = await client.query('SELECT * FROM products WHERE id=$1 AND active FOR UPDATE', [int(req.params.id, 'ID')]);
+      const cur = await client.query(
+        'SELECT * FROM products WHERE id=$1 AND active AND store_id=$2 FOR UPDATE',
+        [int(req.params.id, 'ID'), storeId]);
       if (!cur.rows.length) throw new HttpError(404, 'Produk tidak ditemukan');
       const stock = cur.rows[0].stock;
       const after = b.type === 'restock' ? stock + qty : b.type === 'return' ? stock - qty : qty;
       if (after < 0) throw new HttpError(409, `Stok hanya ${stock}, tidak cukup untuk diretur`);
       const { rows } = await client.query('UPDATE products SET stock=$1 WHERE id=$2 RETURNING *', [after, cur.rows[0].id]);
       await client.query(
-        `INSERT INTO stock_movements (product_id, type, qty_change, stock_after, note, actor)
-         VALUES ($1,$2,$3,$4,$5,$6)`, [cur.rows[0].id, b.type, after - stock, after, note, actor(req)]);
+        `INSERT INTO stock_movements (store_id, product_id, type, qty_change, stock_after, note, actor)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`, [storeId, cur.rows[0].id, b.type, after - stock, after, note, actor(req)]);
       await client.query('COMMIT');
       res.json(productRow(rows[0]));
     } catch (e) {
@@ -289,10 +436,11 @@ function mountApi({ app, pool, IS_STAGING }) {
     } finally { client.release(); }
   }));
 
-  app.get('/api/movements', h(async (_req, res) => {
+  app.get('/api/movements', h(async (req, res) => {
+    if (!req.store) return res.json({ movements: [] });
     const { rows } = await pool.query(
       `SELECT m.*, p.name AS product_name FROM stock_movements m JOIN products p ON p.id = m.product_id
-       ORDER BY m.id DESC LIMIT 30`);
+       WHERE m.store_id = $1 ORDER BY m.id DESC LIMIT 30`, [req.store.id]);
     res.json({ movements: rows.map((r) => ({
       id: r.id, product: r.product_name, type: r.type, qtyChange: r.qty_change, stockAfter: r.stock_after,
       note: r.note, ref: r.ref, createdAt: r.created_at })) });
@@ -300,6 +448,8 @@ function mountApi({ app, pool, IS_STAGING }) {
 
   // ── Sales ──
   app.post('/api/sales', h(async (req, res) => {
+    if (!req.store) throw new HttpError(404, 'Toko tidak ditemukan');
+    const storeId = req.store.id;
     const b = req.body || {};
     const lines = Array.isArray(b.items) ? b.items : [];
     if (!lines.length || lines.length > 200) throw bad('Keranjang kosong');
@@ -320,7 +470,8 @@ function mountApi({ app, pool, IS_STAGING }) {
     try {
       await client.query('BEGIN');
       const { rows } = await client.query(
-        'SELECT * FROM products WHERE id = ANY($1) AND active ORDER BY id FOR UPDATE', [wanted.map((w) => w.id)]);
+        'SELECT * FROM products WHERE id = ANY($1) AND active AND store_id = $2 ORDER BY id FOR UPDATE',
+        [wanted.map((w) => w.id), storeId]);
       const by = Object.fromEntries(rows.map((r) => [r.id, r]));
       let subtotal = 0; let cogs = 0;
       for (const w of wanted) {
@@ -341,21 +492,21 @@ function mountApi({ app, pool, IS_STAGING }) {
       const seq = (await client.query("SELECT nextval('invoice_seq') AS n")).rows[0].n;
       const invoice = `INV-${jakartaDate(req.now).replace(/-/g, '')}-${String(seq).padStart(4, '0')}`;
       const sale = (await client.query(
-        `INSERT INTO sales (invoice_no, cashier, subtotal, discount_type, discount_value, discount_amount,
+        `INSERT INTO sales (store_id, invoice_no, cashier, subtotal, discount_type, discount_value, discount_amount,
            tax_percent, tax_amount, total, cogs, payment_method, paid, change_amount)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-        [invoice, actor(req), subtotal, dType, dValue, discount, taxPct, tax, total, cogs, method, paid, paid - total])).rows[0];
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+        [storeId, invoice, actor(req), subtotal, dType, dValue, discount, taxPct, tax, total, cogs, method, paid, paid - total])).rows[0];
       for (const w of wanted) {
         const p = by[w.id];
         const after = p.stock - w.qty;
         await client.query(
-          `INSERT INTO sale_items (sale_id, product_id, name, sku, qty, list_price, price, cost_price)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [sale.id, p.id, p.name, p.sku, w.qty, p.sell_price, w.price, p.cost_price]);
+          `INSERT INTO sale_items (store_id, sale_id, product_id, name, sku, qty, list_price, price, cost_price)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [storeId, sale.id, p.id, p.name, p.sku, w.qty, p.sell_price, w.price, p.cost_price]);
         await client.query('UPDATE products SET stock = $1 WHERE id = $2', [after, p.id]);
         await client.query(
-          `INSERT INTO stock_movements (product_id, type, qty_change, stock_after, note, ref, actor)
-           VALUES ($1,'sale',$2,$3,'',$4,$5)`, [p.id, -w.qty, after, invoice, actor(req)]);
+          `INSERT INTO stock_movements (store_id, product_id, type, qty_change, stock_after, note, ref, actor)
+           VALUES ($1,$2,'sale',$3,$4,'',$5,$6)`, [storeId, p.id, -w.qty, after, invoice, actor(req)]);
       }
       await client.query('COMMIT');
       res.status(201).json({ sale: saleRow(sale) });
@@ -366,8 +517,9 @@ function mountApi({ app, pool, IS_STAGING }) {
   }));
 
   app.get('/api/sales/:id', h(async (req, res) => {
+    if (!req.store) throw new HttpError(404, 'Transaksi tidak ditemukan');
     const id = int(req.params.id, 'ID');
-    const sale = await pool.query('SELECT * FROM sales WHERE id = $1', [id]);
+    const sale = await pool.query('SELECT * FROM sales WHERE id = $1 AND store_id = $2', [id, req.store.id]);
     if (!sale.rows.length) throw new HttpError(404, 'Transaksi tidak ditemukan');
     const items = await pool.query('SELECT * FROM sale_items WHERE sale_id = $1 ORDER BY id', [id]);
     res.json({
@@ -381,16 +533,21 @@ function mountApi({ app, pool, IS_STAGING }) {
   app.get('/api/reports', h(async (req, res) => {
     const date = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
       ? req.query.date : jakartaDate(req.now);
-    const day = `(created_at AT TIME ZONE '${TZ}')::date = $1::date`;
+    if (!req.store) {
+      return res.json({ date, summary: { count: 0, revenue: 0, cogs: 0, grossProfit: 0, tax: 0, discount: 0, total: 0 },
+        byMethod: [], sales: [] });
+    }
+    const storeId = req.store.id;
+    const day = `(created_at AT TIME ZONE '${TZ}')::date = $1::date AND store_id = $2`;
     const sum = (await pool.query(
       `SELECT COUNT(*)::int AS count, COALESCE(SUM(subtotal - discount_amount),0)::bigint AS revenue,
               COALESCE(SUM(cogs),0)::bigint AS cogs, COALESCE(SUM(tax_amount),0)::bigint AS tax,
               COALESCE(SUM(discount_amount),0)::bigint AS discount, COALESCE(SUM(total),0)::bigint AS total
-       FROM sales WHERE ${day}`, [date])).rows[0];
+       FROM sales WHERE ${day}`, [date, storeId])).rows[0];
     const methods = await pool.query(
       `SELECT payment_method, COUNT(*)::int AS count, SUM(total)::bigint AS total FROM sales
-       WHERE ${day} GROUP BY payment_method ORDER BY payment_method`, [date]);
-    const list = await pool.query(`SELECT * FROM sales WHERE ${day} ORDER BY id DESC LIMIT 200`, [date]);
+       WHERE ${day} GROUP BY payment_method ORDER BY payment_method`, [date, storeId]);
+    const list = await pool.query(`SELECT * FROM sales WHERE ${day} ORDER BY id DESC LIMIT 200`, [date, storeId]);
     const revenue = Number(sum.revenue); const cogs = Number(sum.cogs);
     res.json({
       date,

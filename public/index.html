@@ -112,13 +112,14 @@
   <header class="border-b border-line bg-surface">
     <div class="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
       <span id="brand-logo" class="shrink-0"></span>
-      <div class="min-w-0 grow">
+      <div class="flex min-w-0 grow flex-col items-start gap-1">
         <h1 class="text-heading leading-tight">KasirKU</h1>
         <p id="brand-store" class="truncate text-small text-muted"></p>
+        <button type="button" id="store-switch-btn" class="btn-secondary">Pilih toko ▾</button>
       </div>
       <button type="button" id="open-store" class="btn-secondary">Profil toko</button>
     </div>
-    <nav class="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4" role="tablist" aria-label="Menu utama">
+    <nav id="main-tabs" class="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4" role="tablist" aria-label="Menu utama">
       <button type="button" role="tab" data-tab="kasir" class="tab">Kasir / Penjualan</button>
       <button type="button" role="tab" data-tab="stok" class="tab">Manajemen Stok Gudang</button>
       <button type="button" role="tab" data-tab="laporan" class="tab">Laporan Penjualan</button>
@@ -126,7 +127,16 @@
   </header>
   <p id="staging-note" hidden class="border-b border-line bg-raised px-4 py-2 text-center text-small text-muted">Staging demo: data toko contoh, bukan toko sungguhan.</p>
 
-  <main class="mx-auto max-w-7xl px-4 py-5">
+  <!-- Belum ada toko: shown instead of the tabs when the account owns no store. -->
+  <section id="store-gate" class="mx-auto max-w-7xl px-4 py-5" hidden>
+    <div class="state-empty mx-auto max-w-lg rounded-xl border border-line bg-surface">
+      <p class="text-heading">Belum ada toko</p>
+      <p class="text-body text-muted">Buat toko pertama Anda untuk mulai mencatat penjualan, stok dan laporan.</p>
+      <button type="button" class="btn-primary" data-new-store>Buat toko</button>
+    </div>
+  </section>
+
+  <main id="main-area" class="mx-auto max-w-7xl px-4 py-5">
     <!-- Kasir -->
     <section id="tab-kasir" role="tabpanel" class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_26rem]">
       <div class="flex min-w-0 flex-col gap-4">
@@ -303,6 +313,37 @@
     <div class="flex justify-end gap-2">
       <button type="button" data-close class="btn-secondary">Batal</button>
       <button type="submit" class="btn-primary">Simpan profil</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-stores" class="dlg">
+  <div class="flex flex-col gap-3 p-5">
+    <h2 class="text-heading">Pilih toko</h2>
+    <div id="stores-list"></div>
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <button type="button" id="open-store-profile" class="btn-secondary">Ubah profil toko</button>
+      <span class="grow"></span>
+      <button type="button" data-close class="btn-secondary">Tutup</button>
+      <button type="button" class="btn-primary" data-new-store>Tambah toko baru</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="dlg-new-store" class="dlg">
+  <form id="form-new-store" class="flex flex-col gap-3 p-5" novalidate>
+    <h2 class="text-heading">Tambah toko</h2>
+    <p class="text-small text-muted">Data toko ini disimpan untuk akun Anda.</p>
+    <div><label for="n-name" class="section-label block">Nama toko</label><input id="n-name" class="field" maxlength="80" placeholder="e.g. Toko Maju Jaya"></div>
+    <div><label for="n-address" class="section-label block">Alamat</label><input id="n-address" class="field" maxlength="200" placeholder="e.g. Jl. Melati No. 5, Bandung"></div>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <div><label for="n-phone" class="section-label block">Nomor telepon</label><input id="n-phone" class="field" maxlength="40" inputmode="tel" placeholder="e.g. 0812-3456-7890"></div>
+      <div><label for="n-tax" class="section-label block">PPN bawaan (%)</label><input id="n-tax" class="field" inputmode="decimal" placeholder="e.g. 11"></div>
+    </div>
+    <p data-err role="alert" class="text-small text-danger"></p>
+    <div class="flex justify-end gap-2">
+      <button type="button" data-close class="btn-secondary">Batal</button>
+      <button type="submit" class="btn-primary">Simpan toko</button>
     </div>
   </form>
 </dialog>

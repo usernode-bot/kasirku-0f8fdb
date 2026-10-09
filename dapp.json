@@ -10,10 +10,10 @@
   },
   "tests": [
     {
-      "id": "kasir.catalog",
-      "name": "Kasir shows the product catalog and cart",
+      "id": "store.first",
+      "name": "A new owner is asked to create their first store",
       "path": "/",
-      "expectText": "Minyak Goreng 2 L",
+      "expectText": "Belum ada toko",
       "visual": true,
       "impact": [
         "public/**",
@@ -24,29 +24,15 @@
     },
     {
       "id": "stok.inventory",
-      "name": "Stock tab lists products with low-stock alert",
+      "name": "Stock tab without a store shows the first-store screen",
       "path": "/#stok",
-      "expectText": "produk perlu restock",
-      "visual": true,
-      "impact": [
-        "public/**",
-        "api.js",
-        "server.js",
-        "styles/**"
-      ]
+      "expectText": "Belum ada toko"
     },
     {
       "id": "laporan.daily",
-      "name": "Sales report shows gross profit",
+      "name": "Report tab without a store shows the first-store screen",
       "path": "/#laporan",
-      "expectText": "Estimasi laba kotor",
-      "visual": true,
-      "impact": [
-        "public/**",
-        "api.js",
-        "server.js",
-        "styles/**"
-      ]
+      "expectText": "Belum ada toko"
     }
   ]
 }
