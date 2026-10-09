@@ -97,24 +97,27 @@ tables you've marked private), etc.
 
 ## About KasirKU
 
-A simple cashier app for your shop's sales
-
-_(add a sentence or two more of product context here so Claude Code has a
-shared understanding of what this app is for)_
+A simple cashier app for your shop's sales: ring up product sales fast on the
+Sell screen, keep the catalogue and stock right on Products, and read or print
+a receipt for every sale on Transactions. One shared shop — everyone who opens
+the app sees the same products and sales, and money is Indonesian Rupiah.
 
 ## Design
 
-This app's look. The first real version fills in the blanks; every later
-change follows it, and updates it when a request changes the look on purpose.
+This app's look. Every later change follows it, and updates it when a request
+changes the look on purpose.
 
-- **Palette:** _(name the accent, any second colour and the neutrals, e.g.
-  "accent: tomato red; second: basil green; neutrals: warm greys")_
-- **Signature element:** _(the one thing on screen drawn from this app's
-  subject, which no other app would have)_
+- **Palette:** the kit's warm stone neutrals (ground `250 250 249`, surface
+  white, raised `245 245 244`, warm grey text) with a single teal accent
+  (`15 118 110` light, `45 212 191` dark). All prices read in the accent;
+  the accent is otherwise kept for Checkout and Print.
+- **Signature element:** the receipt — a narrow, centred paper column with
+  dashed dividers and lined items, the way a till slip looks. The cart's
+  totals block echoes the same rhythm, so the money read-out feels like a
+  receipt everywhere it appears.
 - **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
-  _(change their sizes in `tailwind.config.js` if you must, not their number)_
-- **One fixed look:** _(only for an app drawn as its own scene, such as a
-  game: which look, and why. Otherwise delete this line.)_
+  as shipped; no other sizes.
+- Money is written the Indonesian way, like `Rp 12.500`.
 
 The kit is in `styles/tailwind-input.css`: colour tokens with a light and
 a dark value (named in `tailwind.config.js`), and a few components
@@ -139,6 +142,14 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- Money is integer rupiah end to end, never a float; tax is a whole percent
+  and rounds once, on the server, to the nearest rupiah.
+- A sale snapshots each item's `product_name` and `unit_price` into
+  `sale_items`; later product edits never rewrite an old receipt.
+- Sale and seed times come from `req.now` / `usernode.now()`, never
+  `new Date()` in page code or SQL `NOW()`.
+- The three screens plus receipt are reachable by URL query
+  (`?screen=sell|products|transactions|receipt`), which is what the
+  `dapp.json` checks load.
+- No product deletion in this version; `sale_items.product_id` is nullable
+  with `ON DELETE SET NULL` so a future delete cannot break a receipt.

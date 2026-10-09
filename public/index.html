@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  
+
   <script>
   // usernode-dev-console@1
   (function () {
@@ -27,7 +27,7 @@
             seen.add(val);
           }
           if (typeof val === 'function') return '[Function ' + (val.name || 'anonymous') + ']';
-          if (val instanceof Error) return val.stack || (val.name + ': ' + val.message);
+          if (val instanceof Error) return (val.stack || (v.name + ': ' + v.message));
           return val;
         });
       } catch (e) { try { return String(v); } catch (_) { return '[unserializable]'; } }
@@ -64,32 +64,12 @@
   })();
   </script>
   <title>KasirKU</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
-  <!-- Tailwind, PRECOMPILED for this app (was cdn.tailwindcss.com's
-       in-browser engine plus an inline tailwind.config here). The config
-       moved to tailwind.config.js in the repo root; npm run build compiles
-       it to public/tailwind.css with Docker or Paketo on every image build, so the
-       stylesheet is regenerated from THIS commit's markup every deploy and
-       can never drift behind the code. ~7 KB of CSS instead of a ~400 KB
-       engine, and no flash of unstyled content.
-       Writing class names as whole literals is what keeps this working — a
-       class assembled from fragments at runtime (e.g. "bg-" + tone + "-500")
-       is invisible to the compiler. If you genuinely need runtime-generated
-       classes, swap this link for the platform-hosted engine instead:
-       <script src="/usernode-tailwind/v1/tailwind.js"></script> -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%230f766e'/><rect x='32' y='26' width='36' height='48' rx='4' fill='white'/></svg>">
+  <!-- Tailwind, PRECOMPILED for this app. npm run build compiles
+       tailwind.config.js + styles/tailwind-input.css to public/tailwind.css
+       on every image build. Class names are written as whole literals so the
+       compiler sees them. -->
   <link rel="stylesheet" href="/tailwind.css">
-  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path (the
-       handler in server.js serves it under a plain "node server.js"; the
-       platform's edge answers it everywhere else). Never vendor it and never
-       write a hostname in front of it.
-       It is NOT conditional on this app calling a bridge API: it is also how
-       the app ANSWERS the shell, so a scaffold without it is invisible to
-       anything that asks the frame a question. Offline launch is one of those.
-       Another is the page's colour: the bridge reports this document's opaque
-       ground to the shell (#1581), which is what makes the platform bar above
-       the app take the app's tone instead of the viewer's theme (#1945).
-       The bridge is also where the app learns the viewer's light/dark theme:
-       the script below reads it. -->
   <script src="/usernode-bridge/v1/bridge.js"></script>
   <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
        OS preference as the fallback outside Homeroom. -->
@@ -106,30 +86,617 @@
       media.addEventListener('change', applyTheme);
     })();
   </script>
+  <!-- Print: only the receipt, on paper, in the light look whatever the
+       screen theme — like a till slip. -->
+  <style>
+    @media print {
+      body { background: #fff !important; }
+      body * { visibility: hidden; }
+      #receipt-paper, #receipt-paper * { visibility: visible; }
+      #receipt-paper {
+        position: absolute;
+        left: 50%;
+        top: 0;
+        transform: translateX(-50%);
+        margin: 0;
+        max-width: 16rem;
+        border: none;
+        background: #fff !important;
+        color: #1c1917 !important;
+      }
+      #receipt-paper .print-muted { color: #57534e !important; }
+    }
+  </style>
 </head>
 <body class="min-h-screen bg-ground text-fg">
-  <!-- Built from the design kit in styles/tailwind-input.css: colour tokens
-       that are right in both looks, and components for buttons, fields,
-       lists, cards and data states. The real app keeps the kit; CLAUDE.md's
-       "## Design" says how. -->
-  <!-- (Named in prose on purpose: Tailwind compiles any class-name word in
-       these files, comments included, and the starter should ship only the
-       components its screen uses.) -->
-  <main class="mx-auto flex max-w-md flex-col gap-8 px-4 py-10">
+  <main class="mx-auto flex min-h-screen max-w-md flex-col gap-4 px-4 py-6 md:max-w-3xl">
 
-    <!-- usernode-starter-notice@1 — starter-template messaging. When building
-         the user's real app, replace this whole screen and delete this block,
-         both sentinel comments included. -->
-    <section class="card flex flex-col items-start gap-3">
-      <div class="flex h-20 w-20 items-center justify-center rounded-2xl border border-line bg-ground text-title">🧾</div>
-      <span class="rounded-full bg-raised px-3 py-1 text-small font-medium text-muted">Starter template</span>
+    <header class="flex flex-col gap-3 border-b border-line pb-3">
       <h1 class="text-title">KasirKU</h1>
-      <p class="text-body text-muted">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
-      <p class="text-body text-muted">To change this app, ask Homeroom bot: tap the <strong class="font-semibold text-fg">Homeroom icon</strong>, then <strong class="font-semibold text-fg">Suggest an improvement</strong>. Describe what you'd like in plain English, and it will be turned into your real app.</p>
-    </section>
-    <!-- /usernode-starter-notice@1 -->
+      <nav class="flex gap-1" aria-label="Screens">
+        <button type="button" class="tab" data-screen="sell" aria-selected="true">Sell</button>
+        <button type="button" class="tab" data-screen="products" aria-selected="false">Products</button>
+        <button type="button" class="tab" data-screen="transactions" aria-selected="false">Transactions</button>
+      </nav>
+    </header>
 
-    <p class="text-center text-small text-muted">Built on Homeroom. This template screen disappears once you build your real app.</p>
+    <p id="staging-banner" class="hidden self-start rounded-full bg-raised px-3 py-1 text-small text-muted" hidden>Staging demo: fake shop data</p>
+
+    <!-- ── Sell ─────────────────────────────────────────────────────────── -->
+    <section id="screen-sell" class="hidden flex flex-col gap-4 md:grid md:grid-cols-3 md:items-start md:gap-5" hidden>
+      <div class="flex flex-col gap-4 md:col-span-2">
+        <div id="sell-state" class="grid grid-cols-2 gap-2" hidden></div>
+        <div id="product-grid" class="grid grid-cols-2 gap-2 md:grid-cols-3"></div>
+        <p id="sell-error" class="state-error" hidden>
+          <span class="text-body">Could not load products.</span>
+          <span class="text-small text-muted">Selling is paused until this loads.</span>
+          <button type="button" class="btn-secondary" data-retry="sell">Retry</button>
+        </p>
+        <p id="sell-empty" class="state-empty" hidden>
+          <span class="text-heading">No products yet</span>
+          <span class="text-small text-muted">Add your first product on the Products tab, then it shows up here to sell.</span>
+        </p>
+      </div>
+      <section id="cart-card" class="card mt-4 md:mt-0" aria-label="Cart">
+        <span class="section-label">Cart</span>
+        <div id="cart-lines" class="flex flex-col"></div>
+        <p id="cart-empty" class="text-small text-muted">Cart is empty. Tap a product to add it.</p>
+        <div id="cart-totals" class="mt-2 border-t border-dashed border-line pt-2" hidden>
+          <div class="flex items-baseline justify-between py-0.5 text-small">
+            <span>Subtotal</span><span id="t-subtotal" class="tabular-nums"></span>
+          </div>
+          <div class="flex items-baseline justify-between py-0.5 text-small">
+            <span id="t-taxlabel">Tax</span><span id="t-tax" class="tabular-nums"></span>
+          </div>
+          <div class="flex items-baseline justify-between py-0.5 text-body font-bold">
+            <span>Total</span><span id="t-total" class="tabular-nums"></span>
+          </div>
+        </div>
+        <button type="button" id="checkout-btn" class="btn-primary mt-3 w-full" disabled>Checkout</button>
+        <p id="checkout-error" class="mt-2 text-small text-danger" hidden></p>
+      </section>
+    </section>
+
+    <!-- ── Products ─────────────────────────────────────────────────────── -->
+    <section id="screen-products" class="hidden flex flex-col gap-4" hidden>
+      <button type="button" id="add-product-btn" class="btn-primary">Add product</button>
+      <div id="products-state" class="flex flex-col gap-2" hidden></div>
+      <ul id="product-list" class="list" hidden></ul>
+      <p id="products-empty" class="state-empty" hidden>
+        <span class="text-heading">No products yet</span>
+        <span class="text-small text-muted">Add the first thing your shop sells.</span>
+        <button type="button" class="btn-primary" id="empty-add-btn">Add product</button>
+      </p>
+      <p id="products-error" class="state-error" hidden>
+        <span class="text-body">Could not load products.</span>
+        <span class="text-small text-muted">Everything else still works.</span>
+        <button type="button" class="btn-secondary" data-retry="products">Retry</button>
+      </p>
+
+      <section id="product-form-card" class="card" hidden>
+        <h2 id="product-form-title" class="text-heading">Add product</h2>
+        <form id="product-form" class="mt-2 flex flex-col gap-1" novalidate>
+          <label class="mt-1 text-small font-medium" for="pf-name">Name</label>
+          <input id="pf-name" class="field" type="text" maxlength="100" placeholder="e.g. Indomie Goreng" autocomplete="off">
+          <label class="mt-2 text-small font-medium" for="pf-price">Price (Rp)</label>
+          <input id="pf-price" class="field" type="text" inputmode="numeric" placeholder="e.g. 3500" autocomplete="off">
+          <label class="mt-2 text-small font-medium" for="pf-stock">Stock</label>
+          <input id="pf-stock" class="field" type="text" inputmode="numeric" placeholder="e.g. 24" autocomplete="off">
+          <p id="product-form-error" class="text-small text-danger" hidden></p>
+          <div class="mt-3 flex justify-end gap-2">
+            <button type="button" id="product-form-cancel" class="btn-secondary">Cancel</button>
+            <button type="submit" class="btn-primary">Save</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <span class="section-label">Shop settings</span>
+        <label class="text-small font-medium" for="tax-rate">Tax rate</label>
+        <input id="tax-rate" class="field mt-1 max-w-32" type="text" inputmode="numeric" placeholder="e.g. 11" autocomplete="off">
+        <p class="mt-1 text-small text-muted">Whole percent, charged on every sale.</p>
+        <div class="mt-3 flex justify-end gap-2">
+          <button type="button" id="tax-save" class="btn-secondary">Save</button>
+        </div>
+        <p id="tax-msg" class="mt-2 text-small" hidden></p>
+      </section>
+    </section>
+
+    <!-- ── Transactions ─────────────────────────────────────────────────── -->
+    <section id="screen-transactions" class="hidden flex flex-col gap-4" hidden>
+      <div id="sales-state" class="flex flex-col gap-2" hidden></div>
+      <ul id="sale-list" class="list" hidden></ul>
+      <p id="sales-empty" class="state-empty" hidden>
+        <span class="text-heading">No sales yet</span>
+        <span class="text-small text-muted">Ring up your first sale on the Sell tab.</span>
+      </p>
+      <p id="sales-error" class="state-error" hidden>
+        <span class="text-body">Could not load sales.</span>
+        <span class="text-small text-muted">Selling still works.</span>
+        <button type="button" class="btn-secondary" data-retry="transactions">Retry</button>
+      </p>
+    </section>
+
+    <!-- ── Receipt ──────────────────────────────────────────────────────── -->
+    <section id="screen-receipt" class="hidden flex flex-col gap-4" hidden>
+      <button type="button" id="receipt-back" class="btn-secondary self-start border-none bg-transparent px-0 text-small font-medium text-muted hover:bg-transparent">‹ Transactions</button>
+      <div id="receipt-state" class="flex flex-col items-center gap-2" hidden></div>
+      <div id="receipt-paper" class="mx-auto w-full max-w-xs rounded-xl border border-line bg-surface p-6" hidden>
+        <p class="text-center text-body font-bold">KasirKU</p>
+        <p id="r-number" class="text-center text-small print-muted"></p>
+        <p id="r-time" class="text-center text-small text-muted print-muted"></p>
+        <hr class="my-3 border-t border-dashed border-line">
+        <div id="r-lines" class="flex flex-col"></div>
+        <hr class="my-3 border-t border-dashed border-line">
+        <div class="flex items-baseline justify-between py-0.5 text-small">
+          <span>Subtotal</span><span id="r-subtotal" class="tabular-nums"></span>
+        </div>
+        <div class="flex items-baseline justify-between py-0.5 text-small">
+          <span id="r-taxlabel">Tax</span><span id="r-tax" class="tabular-nums"></span>
+        </div>
+        <div class="flex items-baseline justify-between py-0.5 text-body font-bold">
+          <span>Total</span><span id="r-total" class="tabular-nums"></span>
+        </div>
+        <hr class="my-3 border-t border-dashed border-line">
+        <p class="text-center text-small text-muted print-muted">Thank you!</p>
+      </div>
+      <p id="receipt-error" class="state-error self-center" hidden>
+        <span class="text-body">Could not load the receipt.</span>
+        <span class="text-small text-muted">The sale itself is safe.</span>
+        <button type="button" class="btn-secondary" data-retry="receipt">Retry</button>
+      </p>
+      <button type="button" id="print-btn" class="btn-primary mx-auto w-full md:w-64" hidden>Print</button>
+    </section>
   </main>
+
+  <script>
+  (function () {
+    'use strict';
+    var $ = function (id) { return document.getElementById(id); };
+    var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    var SCREENS = ['sell', 'products', 'transactions', 'receipt'];
+
+    var state = {
+      products: null,      // null until first load succeeds
+      sales: null,
+      taxRate: 11,
+      staging: false,
+      cart: new Map(),     // product id -> quantity
+      editingProductId: null,
+      receiptSaleId: null,
+    };
+
+    // ── helpers ──────────────────────────────────────────────────────────
+    function rupiah(n) { return 'Rp ' + Number(n).toLocaleString('id-ID'); }
+    function taxFor(subtotal, rate) { return Math.round((subtotal * rate) / 100); }
+
+    // The bridge's now, so a staging preview opened as of a chosen moment
+    // stays consistent; real time outside Homeroom.
+    function nowDate() {
+      try {
+        if (window.usernode && typeof window.usernode.now === 'function') {
+          var n = window.usernode.now();
+          return n instanceof Date ? n : new Date(n);
+        }
+      } catch (_) {}
+      return new Date();
+    }
+
+    function sameDay(a, b) {
+      return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    }
+    function hhmm(d) {
+      return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    }
+    // "Today, 09:14" / "Yesterday, 16:40" / "7 Oct, 11:05"
+    function timeLabel(iso) {
+      var d = new Date(iso);
+      var n = nowDate();
+      var yesterday = new Date(n.getTime() - 86400000);
+      if (sameDay(d, n)) return 'Today, ' + hhmm(d);
+      if (sameDay(d, yesterday)) return 'Yesterday, ' + hhmm(d);
+      return d.getDate() + ' ' + MONTHS[d.getMonth()] + ', ' + hhmm(d);
+    }
+    // "9 Oct 2026, 09:14"
+    function fullTimeLabel(iso) {
+      var d = new Date(iso);
+      return d.getDate() + ' ' + MONTHS[d.getMonth()] + ' ' + d.getFullYear() + ', ' + hhmm(d);
+    }
+
+    function fetchJSON(url, opts) {
+      return fetch(url, opts).then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (data) {
+          if (!res.ok) {
+            var err = new Error(data.error || data.message || 'Request failed');
+            err.status = res.status;
+            err.data = data;
+            throw err;
+          }
+          return data;
+        });
+      });
+    }
+    function post(url, body) {
+      return fetchJSON(url, {
+        method: body ? 'POST' : 'GET',
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    }
+    function put(url, body) {
+      return fetchJSON(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    }
+    function authMessage(err) {
+      if (err.status === 401) return 'Make an account to continue.';
+      return err.data && err.data.message ? err.data.message : (err.message || 'Something went wrong.');
+    }
+
+    function skeletons(container, rows, tall) {
+      container.innerHTML = '';
+      for (var i = 0; i < rows; i++) {
+        var s = document.createElement('div');
+        s.className = 'skeleton ' + (tall ? 'h-24 w-full' : 'h-14 w-full');
+        container.appendChild(s);
+      }
+    }
+    function show(el, on) {
+      el.hidden = !on;
+      el.classList.toggle('hidden', !on);
+    }
+
+    // ── routing ──────────────────────────────────────────────────────────
+    function currentRoute() {
+      var params = new URLSearchParams(location.search);
+      var s = params.get('screen') || 'sell';
+      if (SCREENS.indexOf(s) === -1) s = 'sell';
+      return { screen: s, sale: params.get('sale') };
+    }
+    function showScreen(name) {
+      SCREENS.forEach(function (s) { show($('screen-' + s), s === name); });
+      document.querySelectorAll('.tab').forEach(function (t) {
+        t.setAttribute('aria-selected', String(t.dataset.screen === name));
+      });
+      var params = new URLSearchParams(location.search);
+      params.set('screen', name);
+      if (name === 'receipt' && state.receiptSaleId) params.set('sale', state.receiptSaleId);
+      if (name !== 'receipt') params.delete('sale');
+      history.replaceState(null, '', location.pathname + '?' + params.toString());
+      window.scrollTo(0, 0);
+    }
+
+    // ── sell ─────────────────────────────────────────────────────────────
+    function loadProducts() {
+      return post('/api/products').then(function (rows) {
+        state.products = rows;
+        renderProducts();
+      });
+    }
+    function renderProducts() {
+      var grid = $('product-grid');
+      grid.innerHTML = '';
+      var list = $('product-list');
+      list.innerHTML = '';
+      (state.products || []).forEach(function (p) {
+        var out = p.stock <= 0;
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'product-tile';
+        b.disabled = out;
+        b.setAttribute('aria-label', p.name + ', ' + rupiah(p.price) + (out ? ', out of stock' : ', stock ' + p.stock));
+        var nm = document.createElement('span');
+        nm.className = 'font-semibold';
+        nm.textContent = p.name;
+        var pr = document.createElement('span');
+        pr.className = 'font-semibold text-accent';
+        pr.textContent = rupiah(p.price);
+        var st = document.createElement('span');
+        st.className = 'text-small text-muted';
+        st.textContent = out ? 'Out of stock' : 'Stock ' + p.stock;
+        b.appendChild(nm); b.appendChild(pr); b.appendChild(st);
+        b.addEventListener('click', function () { addToCart(p.id); });
+        grid.appendChild(b);
+
+        var li = document.createElement('li');
+        li.className = 'list-row';
+        var main = document.createElement('span');
+        main.className = 'flex min-w-0 flex-1 flex-col gap-0.5';
+        var rn = document.createElement('span');
+        rn.className = 'truncate font-semibold';
+        rn.textContent = p.name;
+        var rs = document.createElement('span');
+        rs.className = 'text-small text-muted';
+        rs.textContent = 'Stock ' + p.stock;
+        main.appendChild(rn); main.appendChild(rs);
+        var rp = document.createElement('span');
+        rp.className = 'font-semibold text-accent';
+        rp.textContent = rupiah(p.price);
+        li.appendChild(main); li.appendChild(rp);
+        list.appendChild(li);
+      });
+      var none = state.products && state.products.length === 0;
+      show($('sell-error'), false);
+      show($('products-error'), false);
+      show($('sell-empty'), !!none);
+      show($('cart-card'), !none);
+      show(list, !none);
+      renderCart();
+    }
+
+    function addToCart(id) {
+      var p = (state.products || []).find(function (x) { return x.id === id; });
+      if (!p) return;
+      var have = state.cart.get(id) || 0;
+      if (have + 1 > p.stock) return; // sold out mid-sale; checkout re-checks
+      state.cart.set(id, have + 1);
+      renderCart();
+    }
+    function renderCart() {
+      var lines = $('cart-lines');
+      lines.innerHTML = '';
+      var subtotal = 0;
+      state.cart.forEach(function (qty, id) {
+        var p = (state.products || []).find(function (x) { return x.id === id; });
+        if (!p) { state.cart.delete(id); return; }
+        subtotal += p.price * qty;
+        var row = document.createElement('div');
+        row.className = 'flex items-center gap-2 py-1.5 text-small';
+        var stepper = document.createElement('span');
+        stepper.className = 'flex items-center gap-1';
+        var minus = document.createElement('button');
+        minus.type = 'button';
+        minus.className = 'inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-raised text-fg';
+        minus.setAttribute('aria-label', 'One less ' + p.name);
+        minus.textContent = '−';
+        minus.addEventListener('click', function () {
+          var q = state.cart.get(id) || 0;
+          if (q <= 1) state.cart.delete(id); else state.cart.set(id, q - 1);
+          renderCart();
+        });
+        var qEl = document.createElement('strong');
+        qEl.className = 'min-w-4 text-center tabular-nums';
+        qEl.textContent = String(qty);
+        var plus = document.createElement('button');
+        plus.type = 'button';
+        plus.className = 'inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-raised text-fg';
+        plus.setAttribute('aria-label', 'One more ' + p.name);
+        plus.textContent = '+';
+        plus.addEventListener('click', function () { addToCart(id); });
+        stepper.appendChild(minus); stepper.appendChild(qEl); stepper.appendChild(plus);
+        var nm = document.createElement('span');
+        nm.className = 'min-w-0 flex-1 truncate';
+        nm.textContent = p.name;
+        var amt = document.createElement('span');
+        amt.className = 'tabular-nums';
+        amt.textContent = rupiah(p.price * qty);
+        row.appendChild(stepper); row.appendChild(nm); row.appendChild(amt);
+        lines.appendChild(row);
+      });
+      var empty = state.cart.size === 0;
+      show($('cart-empty'), empty);
+      show($('cart-totals'), !empty);
+      $('checkout-btn').disabled = empty;
+      if (!empty) {
+        var tax = taxFor(subtotal, state.taxRate);
+        $('t-subtotal').textContent = rupiah(subtotal);
+        $('t-taxlabel').textContent = 'Tax ' + state.taxRate + '%';
+        $('t-tax').textContent = rupiah(tax);
+        $('t-total').textContent = rupiah(subtotal + tax);
+      }
+    }
+
+    function checkout() {
+      var btn = $('checkout-btn');
+      var errEl = $('checkout-error');
+      errEl.hidden = true;
+      btn.disabled = true;
+      var items = [];
+      state.cart.forEach(function (qty, id) { items.push({ product_id: id, quantity: qty }); });
+      post('/api/sales', { items: items }).then(function (sale) {
+        state.cart.clear();
+        errEl.hidden = true;
+        loadProducts().catch(function () {});
+        openReceipt(sale.id);
+      }).catch(function (err) {
+        if (err.status === 409 && err.data && err.data.product) {
+          errEl.textContent = err.data.product + ' does not have that much stock left. The cart has been refreshed.';
+          state.cart.clear();
+          loadProducts().catch(function () {});
+        } else {
+          errEl.textContent = authMessage(err);
+        }
+        errEl.hidden = false;
+        renderCart();
+      }).finally(function () {
+        btn.disabled = state.cart.size === 0;
+      });
+    }
+
+    // ── products screen ──────────────────────────────────────────────────
+    function openProductForm(product) {
+      state.editingProductId = product ? product.id : null;
+      $('product-form-title').textContent = product ? 'Edit product' : 'Add product';
+      $('pf-name').value = product ? product.name : '';
+      $('pf-price').value = product ? String(product.price) : '';
+      $('pf-stock').value = product ? String(product.stock) : '';
+      $('product-form-error').hidden = true;
+      show($('product-form-card'), true);
+      $('pf-name').focus();
+    }
+    function saveProduct(ev) {
+      ev.preventDefault();
+      var errEl = $('product-form-error');
+      errEl.hidden = true;
+      var body = {
+        name: $('pf-name').value,
+        price: /^\d+$/.test($('pf-price').value.trim()) ? parseInt($('pf-price').value, 10) : $('pf-price').value.trim(),
+        stock: /^\d+$/.test($('pf-stock').value.trim()) ? parseInt($('pf-stock').value, 10) : $('pf-stock').value.trim(),
+      };
+      var call = state.editingProductId
+        ? put('/api/products/' + state.editingProductId, body)
+        : post('/api/products', body);
+      call.then(function () {
+        show($('product-form-card'), false);
+        loadProducts().catch(function () {});
+      }).catch(function (err) {
+        errEl.textContent = authMessage(err);
+        errEl.hidden = false;
+      });
+    }
+
+    function saveTax() {
+      var msg = $('tax-msg');
+      var raw = $('tax-rate').value.trim();
+      var body = { tax_rate: /^\d+$/.test(raw) ? parseInt(raw, 10) : raw };
+      put('/api/settings', body).then(function (s) {
+        state.taxRate = s.tax_rate;
+        msg.textContent = 'Tax rate saved.';
+        msg.className = 'mt-2 text-small text-muted';
+        msg.hidden = false;
+        renderCart();
+      }).catch(function (err) {
+        msg.textContent = authMessage(err);
+        msg.className = 'mt-2 text-small text-danger';
+        msg.hidden = false;
+      });
+    }
+
+    // ── transactions ─────────────────────────────────────────────────────
+    function loadSales() {
+      return post('/api/sales').then(function (rows) {
+        state.sales = rows;
+        renderSales();
+      });
+    }
+    function renderSales() {
+      var list = $('sale-list');
+      list.innerHTML = '';
+      (state.sales || []).forEach(function (s) {
+        var li = document.createElement('li');
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'sale-row flex w-full items-center gap-3 px-4 py-3 text-left';
+        var main = document.createElement('span');
+        main.className = 'flex min-w-0 flex-1 flex-col gap-0.5';
+        var rn = document.createElement('span');
+        rn.className = 'truncate font-semibold';
+        rn.textContent = timeLabel(s.created_at);
+        var rs = document.createElement('span');
+        rs.className = 'text-small text-muted';
+        rs.textContent = 'Sale #' + s.id + ', ' + s.item_count + (s.item_count === 1 ? ' item' : ' items');
+        main.appendChild(rn); main.appendChild(rs);
+        var total = document.createElement('span');
+        total.className = 'font-semibold tabular-nums';
+        total.textContent = rupiah(s.total);
+        b.appendChild(main); b.appendChild(total);
+        b.addEventListener('click', function () { openReceipt(s.id); });
+        li.appendChild(b);
+        list.appendChild(li);
+      });
+      var none = state.sales && state.sales.length === 0;
+      show($('sales-error'), false);
+      show($('sales-empty'), !!none);
+    }
+
+    // ── receipt ──────────────────────────────────────────────────────────
+    function openReceipt(id) {
+      state.receiptSaleId = id;
+      showScreen('receipt');
+      loadReceipt();
+    }
+    function loadReceipt() {
+      var id = state.receiptSaleId;
+      if (!id) { showScreen('transactions'); return; }
+      show($('receipt-paper'), false);
+      show($('print-btn'), false);
+      show($('receipt-error'), false);
+      show($('receipt-state'), true);
+      skeletons($('receipt-state'), 4, false);
+      post('/api/sales/' + id).then(function (sale) {
+        show($('receipt-state'), false);
+        $('r-number').textContent = 'Sale #' + sale.id;
+        $('r-time').textContent = fullTimeLabel(sale.created_at);
+        $('r-subtotal').textContent = rupiah(sale.subtotal);
+        $('r-taxlabel').textContent = 'Tax ' + sale.tax_rate + '%';
+        $('r-tax').textContent = rupiah(sale.tax_amount);
+        $('r-total').textContent = rupiah(sale.total);
+        var lines = $('r-lines');
+        lines.innerHTML = '';
+        (sale.items || []).forEach(function (it) {
+          var row = document.createElement('div');
+          row.className = 'flex items-baseline justify-between gap-2 py-0.5 text-small';
+          var l = document.createElement('span');
+          l.className = 'min-w-0';
+          l.textContent = it.quantity + ' × ' + it.product_name;
+          var amt = document.createElement('span');
+          amt.className = 'tabular-nums';
+          amt.textContent = rupiah(it.unit_price * it.quantity);
+          row.appendChild(l); row.appendChild(amt);
+          lines.appendChild(row);
+        });
+        show($('receipt-paper'), true);
+        show($('print-btn'), true);
+      }).catch(function () {
+        show($('receipt-state'), false);
+        show($('receipt-error'), true);
+      });
+    }
+
+    // ── per-screen loading glue ──────────────────────────────────────────
+    function enterScreen(name) {
+      showScreen(name);
+      if (name === 'sell') {
+        if (!state.products) { show($('sell-state'), true); skeletons($('sell-state'), 4, true); }
+        loadProducts().catch(function () {
+          show($('sell-state'), false);
+          show($('sell-error'), !state.products);
+        }).finally(function () { show($('sell-state'), false); });
+      } else if (name === 'products') {
+        if (!state.products) { show($('products-state'), true); skeletons($('products-state'), 4, false); }
+        loadProducts().catch(function () {
+          show($('products-state'), false);
+          show($('products-error'), !state.products);
+        }).finally(function () { show($('products-state'), false); });
+      } else if (name === 'transactions') {
+        if (!state.sales) { show($('sales-state'), true); skeletons($('sales-state'), 3, false); }
+        loadSales().catch(function () {
+          show($('sales-state'), false);
+          show($('sales-error'), !state.sales);
+        }).finally(function () { show($('sales-state'), false); });
+      } else if (name === 'receipt') {
+        loadReceipt();
+      }
+    }
+
+    // ── boot ─────────────────────────────────────────────────────────────
+    document.querySelectorAll('.tab').forEach(function (t) {
+      t.addEventListener('click', function () { enterScreen(t.dataset.screen); });
+    });
+    document.querySelectorAll('[data-retry]').forEach(function (b) {
+      b.addEventListener('click', function () { enterScreen(b.dataset.retry); });
+    });
+    $('checkout-btn').addEventListener('click', checkout);
+    $('add-product-btn').addEventListener('click', function () { openProductForm(null); });
+    $('empty-add-btn').addEventListener('click', function () { openProductForm(null); });
+    $('product-form-cancel').addEventListener('click', function () { show($('product-form-card'), false); });
+    $('product-form').addEventListener('submit', saveProduct);
+    $('tax-save').addEventListener('click', saveTax);
+    $('receipt-back').addEventListener('click', function () { state.receiptSaleId = null; enterScreen('transactions'); });
+    $('print-btn').addEventListener('click', function () { window.print(); });
+
+    post('/api/settings').then(function (s) {
+      state.taxRate = s.tax_rate;
+      state.staging = !!s.staging;
+      show($('staging-banner'), state.staging);
+      $('tax-rate').value = String(s.tax_rate);
+      renderCart();
+    }).catch(function () {});
+
+    var route = currentRoute();
+    if (route.screen === 'receipt' && route.sale) {
+      state.receiptSaleId = parseInt(route.sale, 10) || null;
+    }
+    enterScreen(route.screen);
+  })();
+  </script>
 </body>
 </html>

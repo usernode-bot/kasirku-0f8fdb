@@ -7,5 +7,36 @@
   "visibility": {
     "build": "public",
     "view": "public"
-  }
+  },
+  "tests": [
+    {
+      "name": "Sell screen loads",
+      "path": "/",
+      "expectSelector": ".product-tile",
+      "expectText": "Checkout"
+    },
+    {
+      "name": "Products screen loads",
+      "path": "/?screen=products",
+      "expectText": "Add product"
+    },
+    {
+      "name": "Transactions screen loads",
+      "path": "/?screen=transactions",
+      "expectSelector": ".sale-row"
+    },
+    {
+      "name": "Receipt for a seeded sale loads",
+      "path": "/?screen=receipt&sale=1",
+      "expectText": "Print"
+    },
+    {
+      "id": "receipt.view",
+      "name": "Receipt view",
+      "path": "/?screen=receipt&sale=1",
+      "expectText": "Print",
+      "visual": true,
+      "impact": ["public/**", "styles/**", "server.js"]
+    }
+  ]
 }

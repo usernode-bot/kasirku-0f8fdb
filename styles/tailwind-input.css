@@ -125,4 +125,21 @@
   .state-error {
     @apply flex flex-col items-center gap-2 px-4 py-8 text-center;
   }
+
+  /* Product tile: the tappable card on the Sell screen. Sold out is a
+     disabled tile. */
+  .product-tile {
+    @apply flex min-h-11 flex-col items-start gap-1 rounded-xl border border-line bg-surface p-3 text-left text-fg
+      hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus
+      disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-surface;
+  }
+
+  /* Tab in the top bar; the active one carries aria-selected="true". */
+  .tab {
+    @apply inline-flex min-h-11 flex-1 items-center justify-center rounded-lg px-3 text-small font-medium text-muted
+      hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus;
+  }
+  .tab[aria-selected='true'] {
+    @apply bg-raised text-fg;
+  }
 }
