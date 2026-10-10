@@ -148,7 +148,17 @@
     const empty = !hasStore();
     $('#store-gate').hidden = !empty;
     $('#main-area').hidden = empty;
-    $$('#main-tabs [role=tab]').forEach((b) => { b.disabled = empty; });
+    // Locked tabs get an explanation: a note under the row plus the same
+    // words as each tab's tooltip. The note waits for the store list to
+    // answer, so it never claims "no store" while the list is still loading
+    // or failed to load.
+    const lock = empty && S.storesState === 'ok';
+    $$('#main-tabs [role=tab]').forEach((b) => {
+      b.disabled = empty;
+      if (lock) { b.title = 'Buat toko dulu.'; b.setAttribute('aria-describedby', 'tabs-lock-note'); }
+      else { b.removeAttribute('title'); b.removeAttribute('aria-describedby'); }
+    });
+    $('#tabs-lock-note').hidden = !lock;
     renderBrand();
   }
 
