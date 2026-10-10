@@ -323,7 +323,12 @@ function mountApi({ app, pool, IS_STAGING }) {
   // ── Store profile (the active store) ──
   app.get('/api/store', h(async (req, res) => {
     if (!req.store) return res.json(null);
-    res.json(storeRow(req.store));
+    // Whether this store has ever recorded a sale. The onboarding checklist
+    // reads it; `/api/movements` (capped at 30 rows) cannot answer "any sale
+    // at all", so a single EXISTS on the store's own sales is added here.
+    const has = await pool.query(
+      'SELECT EXISTS (SELECT 1 FROM sales WHERE store_id = $1) AS has', [req.store.id]);
+    res.json(Object.assign({}, storeRow(req.store), { hasSales: has.rows[0].has }));
   }));
   app.put('/api/store', h(async (req, res) => {
     if (!req.store) throw new HttpError(404, 'Toko tidak ditemukan');

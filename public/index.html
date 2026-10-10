@@ -113,11 +113,14 @@
     <div class="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
       <span id="brand-logo" class="shrink-0"></span>
       <div class="flex min-w-0 grow flex-col items-start gap-1">
-        <h1 class="text-heading leading-tight">KasirKU</h1>
+        <!-- Homeroom's own bar above the app already shows "KasirKU", so the
+             heading stays for screen readers only and the store name on the
+             switcher is the visible title. -->
+        <h1 class="sr-only">KasirKU</h1>
         <p id="brand-store" class="truncate text-small text-muted"></p>
-        <button type="button" id="store-switch-btn" class="btn-secondary" hidden>Pilih toko ▾</button>
+        <button type="button" id="store-switch-btn" class="btn-secondary max-w-full justify-start truncate text-heading" hidden>Pilih toko ▾</button>
       </div>
-      <button type="button" id="open-store" class="btn-secondary" hidden>Profil toko</button>
+      <button type="button" id="open-store" class="btn-secondary shrink-0 whitespace-nowrap" hidden>Profil toko</button>
     </div>
     <nav id="main-tabs" class="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4" role="tablist" aria-label="Menu utama">
       <button type="button" role="tab" data-tab="kasir" class="tab"><svg viewBox="0 0 20 20" class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 3h7v4H5z M3 9h14l-1 8H4z M7 12h1 M10 12h1 M13 12h1"/></svg>Kasir<span class="hidden sm:inline"> / Penjualan</span></button>
@@ -130,29 +133,21 @@
 
   <!-- Belum ada toko: shown instead of the tabs when the account owns no store. -->
   <section id="store-gate" class="mx-auto max-w-7xl px-4 py-5" hidden>
-    <div class="state-empty mx-auto max-w-lg rounded-xl border border-line bg-surface">
-      <svg viewBox="0 0 96 96" class="h-24 w-24" aria-hidden="true" focusable="false">
-        <circle cx="48" cy="50" r="40" class="fill-raised"/>
-        <rect x="12" y="70" width="72" height="6" rx="3" class="fill-line"/>
-        <rect x="22" y="32" width="20" height="12" rx="2" class="fill-accent"/>
-        <path d="M16 48h32l3 22H13z" class="fill-accent"/>
-        <rect x="20" y="54" width="6" height="4" rx="1" class="fill-surface"/>
-        <rect x="29" y="54" width="6" height="4" rx="1" class="fill-surface"/>
-        <rect x="38" y="54" width="6" height="4" rx="1" class="fill-surface"/>
-        <path d="M68 40l13 7.5v15L68 70l-13-7.5v-15z" class="fill-surface stroke-accent" stroke-width="2" stroke-linejoin="round"/>
-        <path d="M55 47.5l13 7.5 13-7.5M68 55v15" fill="none" class="stroke-accent" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <p class="text-heading">Belum ada toko</p>
+    <div class="state-empty mx-auto w-full max-w-lg gap-3 rounded-xl border border-line bg-surface px-6 py-10">
+      <span id="gate-logo" class="shrink-0"></span>
+      <p class="text-title">Belum ada toko</p>
       <p class="text-body text-muted">Buat toko pertama Anda untuk mulai mencatat penjualan, stok dan laporan.</p>
       <p class="text-body text-muted">Cukup 1 menit: isi nama toko, lalu langsung mulai berjualan.</p>
-      <button type="button" class="btn-primary" data-new-store>Buat toko</button>
+      <button type="button" class="btn-primary mt-2 w-full" data-new-store>Buat toko</button>
     </div>
+    <div id="gate-steps" class="mx-auto mt-5 max-w-lg"></div>
   </section>
 
   <main id="main-area" class="mx-auto max-w-7xl px-4 py-5">
     <!-- Kasir -->
     <section id="tab-kasir" role="tabpanel" class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_26rem]">
       <div class="flex min-w-0 flex-col gap-4">
+        <div id="kasir-steps" hidden></div>
         <h2 class="sr-only">Kasir / Penjualan</h2>
         <div>
           <label for="pos-search" class="section-label block">Cari produk</label>
