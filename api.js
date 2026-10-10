@@ -115,6 +115,10 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(id)
 ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(id);
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(id);
 ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(id);
+-- The checkout's own reference for one attempt to pay a cart: a retry with
+-- the same reference returns the sale already recorded instead of a second one.
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS client_ref TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS sales_store_client_ref ON sales (store_id, client_ref) WHERE client_ref IS NOT NULL;
 `;
 
 // One-time legacy migration: the old single-shop `store_profile` row (id = 1)
@@ -467,9 +471,16 @@ function mountApi({ app, pool, IS_STAGING }) {
     if (!Number.isFinite(taxPct) || taxPct < 0 || taxPct > 100) throw bad('PPN tidak valid');
     const wanted = lines.map((l) => ({
       id: int(l.productId, 'Produk'), qty: int(l.qty, 'Jumlah', { min: 1, max: 100000 }),
-      price: int(l.price, 'Harga', { max: 1000000000 }),
+      price: int(l.price, 'Harga', { min: 1, max: 1000000000 }),
     }));
     if (new Set(wanted.map((w) => w.id)).size !== wanted.length) throw bad('Produk ganda di keranjang');
+    let clientRef = null;
+    if (b.clientRef != null) {
+      if (typeof b.clientRef !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(b.clientRef)) throw bad('Referensi transaksi tidak valid');
+      clientRef = b.clientRef;
+    }
+    const findByRef = async (db) => (await db.query(
+      'SELECT * FROM sales WHERE store_id = $1 AND client_ref = $2', [storeId, clientRef])).rows[0];
 
     const client = await pool.connect();
     try {
@@ -477,6 +488,15 @@ function mountApi({ app, pool, IS_STAGING }) {
       const { rows } = await client.query(
         'SELECT * FROM products WHERE id = ANY($1) AND active AND store_id = $2 ORDER BY id FOR UPDATE',
         [wanted.map((w) => w.id), storeId]);
+      // Looked up after the product locks: a concurrent attempt with the same
+      // reference has committed by now, so a repeated tap finds its sale.
+      if (clientRef) {
+        const done = await findByRef(client);
+        if (done) {
+          await client.query('COMMIT');
+          return res.status(200).json({ sale: saleRow(done), duplicate: true });
+        }
+      }
       const by = Object.fromEntries(rows.map((r) => [r.id, r]));
       let subtotal = 0; let cogs = 0;
       for (const w of wanted) {
@@ -489,18 +509,20 @@ function mountApi({ app, pool, IS_STAGING }) {
       const discount = dType === 'percent' ? Math.round(subtotal * dValue / 100) : Math.min(Math.round(dValue), subtotal);
       const tax = Math.round((subtotal - discount) * taxPct / 100);
       const total = subtotal - discount + tax;
+      if (total > 2000000000) throw bad('Total transaksi terlalu besar');
       let paid = total;
       if (method === 'cash') {
-        paid = int(b.paid, 'Uang diterima', { max: 100000000000 });
+        paid = int(b.paid, 'Uang diterima', { max: 2000000000 });
         if (paid < total) throw bad('Uang diterima kurang dari total');
       }
       const seq = (await client.query("SELECT nextval('invoice_seq') AS n")).rows[0].n;
       const invoice = `INV-${jakartaDate(req.now).replace(/-/g, '')}-${String(seq).padStart(4, '0')}`;
       const sale = (await client.query(
         `INSERT INTO sales (store_id, invoice_no, cashier, subtotal, discount_type, discount_value, discount_amount,
-           tax_percent, tax_amount, total, cogs, payment_method, paid, change_amount)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-        [storeId, invoice, actor(req), subtotal, dType, dValue, discount, taxPct, tax, total, cogs, method, paid, paid - total])).rows[0];
+           tax_percent, tax_amount, total, cogs, payment_method, paid, change_amount, client_ref)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+        [storeId, invoice, actor(req), subtotal, dType, dValue, discount, taxPct, tax, total, cogs, method, paid, paid - total,
+          clientRef])).rows[0];
       for (const w of wanted) {
         const p = by[w.id];
         const after = p.stock - w.qty;
@@ -517,6 +539,11 @@ function mountApi({ app, pool, IS_STAGING }) {
       res.status(201).json({ sale: saleRow(sale) });
     } catch (e) {
       await client.query('ROLLBACK').catch(() => {});
+      // Lost the race to an attempt with the same reference: answer with its sale.
+      if (clientRef && e.code === '23505') {
+        const done = await findByRef(pool);
+        if (done) return res.status(200).json({ sale: saleRow(done), duplicate: true });
+      }
       throw e;
     } finally { client.release(); }
   }));

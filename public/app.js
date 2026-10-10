@@ -50,7 +50,14 @@
     if (token()) headers['x-usernode-token'] = token();
     if (S.activeStoreId) headers['x-usernode-store'] = String(S.activeStoreId);
     if (window.usernode && usernode.previewNow) headers['x-usernode-now'] = usernode.now().toISOString();
-    const res = await fetch(path, { method: o.method || 'GET', headers, body: o.body ? JSON.stringify(o.body) : undefined });
+    let res;
+    try {
+      res = await fetch(path, { method: o.method || 'GET', headers, body: o.body ? JSON.stringify(o.body) : undefined });
+    } catch (_) {
+      const err = new Error('Koneksi terputus');
+      err.status = 0;
+      throw err;
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const err = new Error(data.error === 'account_required' ? 'Masuk ke akun Homeroom untuk mengubah data' : (data.error || 'Permintaan gagal'));
@@ -65,6 +72,7 @@
     tab: 'kasir', stores: [], storesState: 'loading', activeStoreId: readSavedStore(),
     store: null, products: [], productsState: 'loading', q: '', cat: 'Semua', stockQ: '',
     cart: [], discType: 'none', discValue: 0, taxPct: 11, method: 'cash', paid: 0, paying: false,
+    checkoutRef: null, payUncertain: false,
     movements: null, movementsState: 'loading', report: null, reportState: 'loading', reportDate: today(),
     receipt: null,
   };
@@ -136,6 +144,7 @@
     try {
       S.products = (await api('/api/products')).products;
       S.productsState = 'ok';
+      reconcileCart();
     } catch (e) { S.productsState = 'error'; }
     renderProducts();
   }
@@ -282,9 +291,11 @@
   async function setActiveStore(id) {
     if (!S.stores.some((s) => s.id === id)) return;
     if (id === S.activeStoreId) { $('#dlg-stores').close(); return; }
+    if (S.paying) return toast('Tunggu transaksi selesai');
     S.activeStoreId = id; saveStore(id);
     // A cart belongs to one store: never shop two stores in one transaction.
     S.cart = []; S.paid = 0; S.cat = 'Semua'; S.q = ''; $('#cash-paid').value = ''; $('#pos-search').value = '';
+    cartChanged();
     renderShell(); $('#dlg-stores').close();
     toast('Toko aktif: ' + ((S.stores.find((s) => s.id === id) || {}).name || ''));
     await loadStore(); loadProducts(); loadMovements(); if (S.tab === 'laporan') loadReport();
@@ -346,7 +357,44 @@
       if (p.stock < 1) return;
       S.cart.push({ id: p.id, name: p.name, sku: p.sku, stock: p.stock, listPrice: p.sellPrice, price: p.sellPrice, qty: 1 });
     }
-    renderCart(); renderPos();
+    cartChanged(); renderCart(); renderPos();
+  }
+
+  // A changed cart, discount, tax, method or amount is a new transaction: the
+  // next Bayar gets a fresh reference instead of retrying the last one.
+  function cartChanged() { S.checkoutRef = null; S.payUncertain = false; }
+
+  // After every catalogue refresh: compare each line with the latest stock.
+  // Quantities are never lowered silently; the line is flagged instead.
+  function reconcileCart() {
+    S.cart.forEach((l) => {
+      const p = S.products.find((x) => x.id === l.id);
+      l.gone = !p;
+      if (p) l.stock = p.stock;
+    });
+    renderCart();
+  }
+
+  // What a line needs fixing before it can be paid, or ''.
+  function lineProblem(l) {
+    if (l.gone) return 'Produk sudah dihapus dari katalog, hapus dari keranjang';
+    if (l.qty > l.stock) return 'Stok tinggal ' + l.stock + ', kurangi jumlahnya';
+    if (l.price < 1) return 'Harga satuan belum diisi';
+    return '';
+  }
+
+  // The first thing that blocks payment, in the order a cashier fixes them.
+  function cartProblem(t) {
+    if (!S.cart.length) return 'Tambahkan produk ke keranjang dulu.';
+    const gone = S.cart.find((l) => l.gone);
+    if (gone) return gone.name + ' sudah dihapus dari katalog, hapus dari keranjang.';
+    const short = S.cart.find((l) => l.qty > l.stock);
+    if (short) return 'Stok ' + short.name + ' tinggal ' + short.stock + ', kurangi jumlahnya.';
+    const free = S.cart.find((l) => l.price < 1);
+    if (free) return 'Isi harga satuan ' + free.name + '.';
+    if (t.total > 2000000000) return 'Total transaksi terlalu besar.';
+    if (S.method === 'cash' && S.paid < t.total) return 'Uang diterima masih kurang ' + rp(t.total - S.paid) + '.';
+    return '';
   }
 
   function renderCart() {
@@ -358,7 +406,8 @@
       box.innerHTML = '<ul class="divide-y divide-line">' + S.cart.map((l) =>
         '<li class="flex flex-col gap-2 py-3" data-line="' + l.id + '">'
         + '<div class="flex items-start justify-between gap-2"><div class="min-w-0"><p class="text-body font-medium leading-tight">' + esc(l.name) + '</p>'
-        + '<p class="text-small text-muted">' + esc(l.sku) + (l.price !== l.listPrice ? ' · harga normal ' + rp(l.listPrice) : '') + '</p></div>'
+        + '<p class="text-small text-muted">' + esc(l.sku) + (l.price !== l.listPrice ? ' · harga normal ' + rp(l.listPrice) : '') + '</p>'
+        + (lineProblem(l) ? '<p class="text-small text-danger" data-line-problem="' + l.id + '">' + lineProblem(l) + '</p>' : '') + '</div>'
         + '<button type="button" class="btn-secondary shrink-0" data-remove="' + l.id + '" aria-label="Hapus ' + esc(l.name) + ' dari keranjang">Hapus</button></div>'
         + '<div class="flex items-end gap-2">'
         + '<div class="flex items-center gap-1"><button type="button" class="btn-secondary px-0" data-dec="' + l.id + '" aria-label="Kurangi jumlah">−</button>'
@@ -386,23 +435,37 @@
     $('#cash-quick').innerHTML = t.total > 0 ? Array.from(new Set(quick)).map((v, i) =>
       '<button type="button" class="btn-secondary" data-quick="' + v + '">' + (i === 0 ? 'Uang pas' : rp(v)) + '</button>').join('') : '';
     $$('#pay-methods [data-method]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.method === S.method)));
-    let hint = '';
-    if (!S.cart.length) hint = 'Tambahkan produk ke keranjang dulu.';
-    else if (cash && S.paid < t.total) hint = 'Uang diterima masih kurang ' + rp(t.total - S.paid) + '.';
-    $('#pay-hint').textContent = hint;
-    $('#pay-btn').disabled = S.paying || !S.cart.length || (cash && S.paid < t.total);
-    $('#pay-btn').textContent = S.paying ? 'Memproses…' : 'Bayar' + (t.total ? ' ' + rp(t.total) : '');
+    const problem = cartProblem(t);
+    const hint = $('#pay-hint');
+    hint.textContent = problem || (S.payUncertain
+      ? 'Koneksi terputus saat membayar, jadi status transaksi belum pasti. Ketuk Coba bayar lagi. Transaksi tidak akan tercatat dua kali.' : '');
+    // Red only when something blocks payment; the empty cart is just a prompt.
+    const blocking = (problem && S.cart.length) || (!problem && S.payUncertain);
+    hint.classList.toggle('text-danger', !!blocking);
+    hint.classList.toggle('text-muted', !blocking);
+    $('#pay-btn').disabled = S.paying || !!problem;
+    $('#pay-btn').textContent = S.paying ? 'Memproses…' : S.payUncertain ? 'Coba bayar lagi' : 'Bayar' + (t.total ? ' ' + rp(t.total) : '');
+  }
+
+  function newRef() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
   }
 
   async function checkout() {
     const t = calc();
+    if (S.paying || cartProblem(t)) return;
+    // Kept across a failed attempt whose outcome is unknown, so the retry is
+    // recognised by the server and never records the sale twice.
+    S.checkoutRef = S.checkoutRef || newRef();
     S.paying = true; updateTotals();
     try {
       const { sale } = await api('/api/sales', { method: 'POST', body: {
         items: S.cart.map((l) => ({ productId: l.id, qty: l.qty, price: l.price })),
         discountType: S.discType, discountValue: S.discValue, taxPercent: S.taxPct,
-        paymentMethod: S.method, paid: S.method === 'cash' ? S.paid : t.total,
+        paymentMethod: S.method, paid: S.method === 'cash' ? S.paid : t.total, clientRef: S.checkoutRef,
       } });
+      cartChanged();
       S.cart = []; S.paid = 0; $('#cash-paid').value = '';
       S.discType = 'none'; S.discValue = 0; $('#disc-type').value = 'none'; $('#disc-value').value = ''; $('#disc-value').disabled = true;
       S.paying = false;
@@ -414,9 +477,16 @@
       toast('Transaksi ' + sale.invoiceNo + ' berhasil');
       showReceipt(sale.id);
     } catch (e) {
-      S.paying = false; updateTotals();
+      S.paying = false;
+      if (!e.status || e.status >= 500) {
+        // The sale may or may not have been recorded: keep the reference.
+        S.payUncertain = true; updateTotals();
+        toast('Status transaksi belum pasti');
+        return;
+      }
+      cartChanged(); updateTotals();
       toast(e.message);
-      if (e.status === 409) loadProducts();
+      if (e.status === 409 || e.status === 404) loadProducts();
     }
   }
 
@@ -500,7 +570,7 @@
     if (b.textContent !== 'Yakin hapus?') { b.textContent = 'Yakin hapus?'; return; }
     try {
       await api('/api/products/' + editingId, { method: 'DELETE' });
-      S.cart = S.cart.filter((l) => l.id !== editingId);
+      S.cart = S.cart.filter((l) => l.id !== editingId); cartChanged();
       $('#dlg-product').close(); toast('Produk dihapus'); renderCart(); loadProducts();
     } catch (err) { setErr($('#dlg-product'), err.message); }
   });
@@ -590,7 +660,7 @@
       $('#dlg-new-store').close();
       S.stores.push(created);
       S.activeStoreId = created.id; saveStore(created.id);
-      S.cart = []; S.cat = 'Semua'; S.q = '';
+      S.cart = []; S.cat = 'Semua'; S.q = ''; cartChanged();
       renderShell();
       toast('Toko ' + created.name + ' dibuat');
       await loadStore(); loadProducts(); loadMovements();
@@ -695,29 +765,30 @@
   $('#stock-search').addEventListener('input', (e) => { S.stockQ = e.target.value; renderStockList(); });
   $('#add-product').addEventListener('click', () => openProduct(null));
   $('#report-date').addEventListener('change', (e) => { if (e.target.value) { S.reportDate = e.target.value; loadReport(); } });
-  $('#cart-clear').addEventListener('click', () => { S.cart = []; renderCart(); renderPos(); });
+  $('#cart-clear').addEventListener('click', () => { S.cart = []; cartChanged(); renderCart(); renderPos(); });
   $('#pay-btn').addEventListener('click', checkout);
   $('#store-switch-btn').addEventListener('click', openStores);
 
   $('#disc-type').addEventListener('change', (e) => {
-    S.discType = e.target.value; S.discValue = 0;
+    S.discType = e.target.value; S.discValue = 0; cartChanged();
     const v = $('#disc-value'); v.value = ''; v.disabled = S.discType === 'none';
     v.placeholder = S.discType === 'percent' ? 'e.g. 10' : 'e.g. 5000';
     updateTotals();
   });
-  $('#disc-value').addEventListener('input', (e) => { S.discValue = Math.max(0, dec(e.target.value)); updateTotals(); });
-  $('#tax-pct').addEventListener('input', (e) => { S.taxPct = Math.min(100, Math.max(0, dec(e.target.value))); updateTotals(); });
-  $('#cash-paid').addEventListener('input', (e) => { S.paid = digits(e.target.value); updateTotals(); });
+  $('#disc-value').addEventListener('input', (e) => { S.discValue = Math.max(0, dec(e.target.value)); cartChanged(); updateTotals(); });
+  $('#tax-pct').addEventListener('input', (e) => { S.taxPct = Math.min(100, Math.max(0, dec(e.target.value))); cartChanged(); updateTotals(); });
+  $('#cash-paid').addEventListener('input', (e) => { S.paid = digits(e.target.value); cartChanged(); updateTotals(); });
 
   // Typing in a cart line only updates numbers, so the field keeps focus.
   $('#cart-lines').addEventListener('input', (e) => {
     const qtyId = e.target.dataset.qty; const priceId = e.target.dataset.price;
     const line = S.cart.find((l) => l.id === Number(qtyId || priceId));
     if (!line) return;
-    if (qtyId) line.qty = Math.min(Math.max(digits(e.target.value), 1), line.stock);
+    if (qtyId) line.qty = Math.max(Math.min(digits(e.target.value), line.stock), 1);
     else line.price = digits(e.target.value);
-    updateTotals();
+    cartChanged(); updateTotals();
   });
+  // Re-render on commit so a line's warning follows its new quantity or price.
   $('#cart-lines').addEventListener('change', () => { renderCart(); renderPos(); });
 
   document.addEventListener('click', (e) => {
@@ -727,15 +798,15 @@
     if (d.add) addToCart(Number(d.add));
     else if (d.cat) { S.cat = d.cat; renderPos(); }
     else if (d.switch) setActiveStore(Number(d.switch));
-    else if (d.remove) { S.cart = S.cart.filter((l) => l.id !== Number(d.remove)); renderCart(); renderPos(); }
+    else if (d.remove) { S.cart = S.cart.filter((l) => l.id !== Number(d.remove)); cartChanged(); renderCart(); renderPos(); }
     else if (d.inc || d.dec) {
       const line = S.cart.find((l) => l.id === Number(d.inc || d.dec));
       if (!line) return;
       if (d.inc && line.qty >= line.stock) return toast('Stok ' + line.name + ' hanya ' + line.stock);
-      line.qty = Math.max(1, line.qty + (d.inc ? 1 : -1)); renderCart(); renderPos();
+      line.qty = Math.max(1, line.qty + (d.inc ? 1 : -1)); cartChanged(); renderCart(); renderPos();
     }
-    else if (d.method) { S.method = d.method; updateTotals(); }
-    else if (d.quick) { S.paid = Number(d.quick); $('#cash-paid').value = String(S.paid); updateTotals(); }
+    else if (d.method) { if (d.method !== S.method) cartChanged(); S.method = d.method; updateTotals(); }
+    else if (d.quick) { S.paid = Number(d.quick); $('#cash-paid').value = String(S.paid); cartChanged(); updateTotals(); }
     else if (d.adjust) openAdjust(Number(d.adjust));
     else if (d.edit) openProduct(Number(d.edit));
     else if (t.hasAttribute('data-new-store')) openNewStore();
