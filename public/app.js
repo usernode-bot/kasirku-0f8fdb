@@ -168,6 +168,13 @@
     sub.textContent = '';
     sub.hidden = true;
     $('#store-switch-btn').textContent = (name || 'Pilih toko') + ' ▾';
+    // Until the caller owns a store, the one thing to do is "Buat toko" in the
+    // gate below: keep the switcher and "Profil toko" out of the header.
+    // Also hidden while the store list is loading or failed to load (S.stores
+    // is [] for both), so they never flash in and then vanish.
+    const none = !S.stores.length;
+    $('#store-switch-btn').hidden = none;
+    $('#open-store').hidden = none;
   }
 
   // ── Store switcher ──
