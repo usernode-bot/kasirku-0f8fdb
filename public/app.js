@@ -157,7 +157,17 @@
     const empty = !hasStore();
     $('#store-gate').hidden = !empty;
     $('#main-area').hidden = empty;
-    $$('#main-tabs [role=tab]').forEach((b) => { b.disabled = empty; });
+    // Locked tabs get an explanation: a note under the row plus the same
+    // words as each tab's tooltip. The note waits for the store list to
+    // answer, so it never claims "no store" while the list is still loading
+    // or failed to load.
+    const lock = empty && S.storesState === 'ok';
+    $$('#main-tabs [role=tab]').forEach((b) => {
+      b.disabled = empty;
+      if (lock) { b.title = 'Buat toko dulu.'; b.setAttribute('aria-describedby', 'tabs-lock-note'); }
+      else { b.removeAttribute('title'); b.removeAttribute('aria-describedby'); }
+    });
+    $('#tabs-lock-note').hidden = !lock;
     renderBrand();
     renderOnboarding();
   }
@@ -179,6 +189,13 @@
     sub.textContent = '';
     sub.hidden = true;
     $('#store-switch-btn').textContent = (name || 'Pilih toko') + ' ▾';
+    // Until the caller owns a store, the one thing to do is "Buat toko" in the
+    // gate below: keep the switcher and "Profil toko" out of the header.
+    // Also hidden while the store list is loading or failed to load (S.stores
+    // is [] for both), so they never flash in and then vanish.
+    const none = !S.stores.length;
+    $('#store-switch-btn').hidden = none;
+    $('#open-store').hidden = none;
   }
 
   // ── Langkah awal: a three-step starter checklist ──
