@@ -157,17 +157,19 @@
     const empty = !hasStore();
     $('#store-gate').hidden = !empty;
     $('#main-area').hidden = empty;
-    // Locked tabs get an explanation: a note under the row plus the same
-    // words as each tab's tooltip. The note waits for the store list to
+    // Locked tabs explain themselves: a small lock after the name plus the
+    // same words as each tab's tooltip. The lock waits for the store list to
     // answer, so it never claims "no store" while the list is still loading
     // or failed to load.
     const lock = empty && S.storesState === 'ok';
     $$('#main-tabs [role=tab]').forEach((b) => {
       b.disabled = empty;
-      if (lock) { b.title = 'Buat toko dulu.'; b.setAttribute('aria-describedby', 'tabs-lock-note'); }
-      else { b.removeAttribute('title'); b.removeAttribute('aria-describedby'); }
+      if (lock) { b.title = 'Buat toko dulu.'; }
+      else { b.removeAttribute('title'); }
+      const icon = b.querySelector('[data-tab-lock]');
+      if (lock && !icon) b.insertAdjacentHTML('beforeend', TAB_LOCK_SVG);
+      if (!lock && icon) icon.remove();
     });
-    $('#tabs-lock-note').hidden = !lock;
     renderBrand();
     renderOnboarding();
   }
@@ -206,6 +208,9 @@
   // Hidden while data is loading or failed, so no step ever shows a wrong
   // tick, and gone for good once all three are done.
   const STEP_DONE_SVG = '<svg viewBox="0 0 20 20" class="h-4 w-4 stroke-on-accent" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg>';
+  // Padlock shown inside a locked main tab (no store yet): line-drawn in
+  // currentColor, so it follows the tab's own muted text colour in both looks.
+  const TAB_LOCK_SVG = '<svg data-tab-lock viewBox="0 0 20 20" class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 9h10v8H5z M7 9V6a3 3 0 0 1 6 0v3"/></svg>';
   function stepMarker(state, num) {
     if (state === 'done') return '<span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent">' + STEP_DONE_SVG + '</span>';
     const cls = state === 'next' ? 'border-2 border-accent text-accent' : 'border-2 border-line text-muted';
