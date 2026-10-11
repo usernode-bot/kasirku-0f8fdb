@@ -133,12 +133,15 @@
 
   <!-- Belum ada toko: shown instead of the tabs when the account owns no store. -->
   <section id="store-gate" class="mx-auto max-w-7xl px-4 py-5" hidden>
-    <div class="state-empty mx-auto w-full max-w-lg gap-3 rounded-xl border border-line bg-surface px-6 py-10">
-      <span id="gate-logo" class="shrink-0"></span>
+    <div class="state-empty mx-auto w-full max-w-lg gap-3 rounded-xl border border-line bg-surface px-6 py-6">
       <p class="text-title">Belum ada toko</p>
-      <p class="text-body text-muted">Buat toko pertama Anda untuk mulai mencatat penjualan, stok dan laporan.</p>
-      <p class="text-body text-muted">Cukup 1 menit: isi nama toko, lalu langsung mulai berjualan.</p>
-      <button type="button" class="btn-primary mt-2 w-full" data-new-store>Buat toko</button>
+      <p class="text-body text-muted">Cukup 1 menit: isi nama toko, lalu mulai mencatat penjualan, stok dan laporan.</p>
+      <form id="form-gate-store" class="flex w-full flex-col gap-2 text-left" novalidate>
+        <label for="g-name" class="section-label block mb-0">Nama toko</label>
+        <input id="g-name" class="field" maxlength="80" placeholder="e.g. Toko Maju Jaya" autocomplete="organization">
+        <p data-err role="alert" class="text-small text-danger"></p>
+        <button type="submit" class="btn-primary w-full">Buat toko</button>
+      </form>
     </div>
     <div id="gate-steps" class="mx-auto mt-5 max-w-lg"></div>
   </section>
