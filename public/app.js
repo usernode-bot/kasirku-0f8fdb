@@ -181,7 +181,6 @@
   // ── Brand ──
   function renderBrand() {
     $('#brand-logo').innerHTML = logoSvg('h-10 w-10');
-    $('#gate-logo').innerHTML = logoSvg('h-14 w-14');
     const name = S.store ? S.store.name : '';
     // The active store now lives on the switcher button itself, so the old
     // muted subtitle stays empty (and hidden) to avoid printing the name twice.
@@ -232,7 +231,7 @@
     const kasirBox = $('#kasir-steps');
     if (!hasStore()) {
       gateBox.innerHTML = onboardingHtml([
-        { done: false, title: 'Buat toko', hint: 'Pakai tombol Buat toko di atas.' },
+        { done: false, title: 'Buat toko', hint: 'Isi nama toko di atas, lalu tekan Buat toko.' },
         { done: false, title: 'Tambah produk', hint: 'Bisa setelah toko dibuat.' },
         { done: false, title: 'Catat penjualan pertama', hint: 'Bisa setelah toko dibuat.' },
       ]);
@@ -581,6 +580,16 @@
     if ($('#dlg-stores').open) $('#dlg-stores').close();
     openDlg($('#dlg-new-store'));
   }
+  // Shared by the "Tambah toko" dialog and the gate card's inline form:
+  // everything that happens once POST /api/stores has answered.
+  async function afterStoreCreated(created) {
+    S.stores.push(created);
+    S.activeStoreId = created.id; saveStore(created.id);
+    S.cart = []; S.cat = 'Semua'; S.q = '';
+    renderShell();
+    toast('Toko ' + created.name + ' dibuat');
+    await loadStore(); loadProducts(); loadMovements();
+  }
   $('#form-new-store').addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = $('#n-name').value.trim();
@@ -588,13 +597,25 @@
     try {
       const created = await api('/api/stores', { method: 'POST', body: { name, address: $('#n-address').value.trim(), phone: $('#n-phone').value.trim(), taxPercent: dec($('#n-tax').value) } });
       $('#dlg-new-store').close();
-      S.stores.push(created);
-      S.activeStoreId = created.id; saveStore(created.id);
-      S.cart = []; S.cat = 'Semua'; S.q = '';
-      renderShell();
-      toast('Toko ' + created.name + ' dibuat');
-      await loadStore(); loadProducts(); loadMovements();
+      await afterStoreCreated(created);
     } catch (err) { setErr($('#dlg-new-store'), err.message); }
+  });
+  // The gate card's inline "first store" form: name only, the rest filled
+  // later in "Profil toko" (PPN starts at the default 11).
+  $('#form-gate-store').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const name = $('#g-name').value.trim();
+    if (!name) return setErr(form, 'Nama toko wajib diisi.');
+    setErr(form, '');
+    const btn = form.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const created = await api('/api/stores', { method: 'POST', body: { name, address: '', phone: '', taxPercent: 11 } });
+      $('#g-name').value = '';
+      await afterStoreCreated(created);
+    } catch (err) { setErr(form, err.message); }
+    finally { btn.disabled = false; }
   });
 
   // ── Struk ──
