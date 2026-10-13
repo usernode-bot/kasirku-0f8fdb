@@ -144,7 +144,8 @@
     @apply inline-flex items-center rounded-full bg-raised px-2 py-0.5 text-small font-medium;
   }
   .dlg {
-    @apply w-[calc(100%-2rem)] max-w-lg rounded-xl border border-line bg-surface p-0 text-fg backdrop:bg-black/50;
+    @apply w-[calc(100%-2rem)] max-w-lg rounded-xl border border-line bg-surface p-0 text-fg backdrop:bg-black/50
+      max-h-[calc(100dvh-2rem)] open:flex open:flex-col;
   }
   .th {
     @apply px-3 py-2 text-left text-small font-medium text-muted;
