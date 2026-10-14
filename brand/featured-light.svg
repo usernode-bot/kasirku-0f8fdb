@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <!-- KasirKU featured icon, light: Black register on Cream, Yellow receipt with a Black outline.
+       Same mark as brand/icon.svg, scaled x1.15 and centred in 1600x900.
+       Homeroom brand palette only: Black #000000, Cream #FFFEEA, Yellow #FFEE6F. -->
+  <rect width="1600" height="900" fill="#FFFEEA"/>
+  <g transform="translate(208.9 -141.1) scale(1.15)">
+    <path d="M412 520 V300 Q412 196 516 196 H640 Q700 196 700 256 Q700 300 656 300 H600 V520 Z" fill="none" stroke="#000000" stroke-width="24"/>
+    <path d="M412 520 V300 Q412 196 516 196 H640 Q700 196 700 256 Q700 300 656 300 H600 V520 Z" fill="#FFEE6F"/>
+    <rect x="452" y="330" width="108" height="26" rx="13" fill="#000000"/>
+    <rect x="452" y="392" width="80" height="26" rx="13" fill="#000000"/>
+    <path d="M260 520 H764 Q796 520 800 552 L828 800 Q832 832 800 832 H224 Q192 832 196 800 L224 552 Q228 520 260 520 Z" fill="#000000"/>
+    <rect x="300" y="600" width="88" height="64" rx="18" fill="#FFFEEA"/>
+    <rect x="468" y="600" width="88" height="64" rx="18" fill="#FFFEEA"/>
+    <rect x="636" y="600" width="88" height="64" rx="18" fill="#FFFEEA"/>
+  </g>
+</svg>

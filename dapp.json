@@ -1,6 +1,7 @@
 {
   "description": "A simple cashier app for your shop's sales",
   "icon": {
+    "image": "brand/icon.png",
     "emoji": "🧾"
   },
   "secrets": [],
