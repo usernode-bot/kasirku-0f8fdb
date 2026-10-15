@@ -198,8 +198,32 @@
       if (lock && !icon) b.insertAdjacentHTML('beforeend', TAB_LOCK_SVG);
       if (!lock && icon) icon.remove();
     });
+    renderGate();
     renderBrand();
     renderOnboarding();
+  }
+
+  // The gate itself has three looks: skeleton rows while the store list is
+  // still in flight, the error box when that request failed, and the Buat
+  // toko form with Langkah awal only after a successful answer that found
+  // no stores. A failed list must never read as "you have no store".
+  function renderGate() {
+    const card = $('#gate-card');
+    const status = $('#gate-status');
+    const steps = $('#gate-steps');
+    const pending = !hasStore() && S.storesState !== 'ok';
+    if (pending) {
+      card.hidden = true;
+      steps.innerHTML = ''; steps.hidden = true;
+      status.hidden = false;
+      status.innerHTML = S.storesState === 'error'
+        ? errorBox('Daftar toko', 'stores')
+        : '<div class="skeleton h-72"></div><div class="mt-5">' + skeletonRows(3) + '</div>';
+    } else {
+      status.hidden = true; status.innerHTML = '';
+      card.hidden = false;
+      steps.hidden = false;
+    }
   }
 
   // ── Shared state blocks ──
@@ -263,6 +287,9 @@
     const gateBox = $('#gate-steps');
     const kasirBox = $('#kasir-steps');
     if (!hasStore()) {
+      // While the store list is in flight or failed, renderGate shows
+      // skeletons or the error box instead of the starter steps.
+      if (S.storesState !== 'ok') { gateBox.innerHTML = ''; kasirBox.hidden = true; return; }
       gateBox.innerHTML = onboardingHtml([
         { done: false, title: 'Buat toko', hint: 'Isi nama toko di atas, lalu tekan Buat toko.' },
         { done: false, title: 'Tambah produk', hint: 'Bisa setelah toko dibuat.' },
@@ -957,17 +984,25 @@
     else if (d.receipt) showReceipt(Number(d.receipt));
     else if (d.payDebt) openDebtPay(Number(d.payDebt));
     else if (d.goto) goto(d.goto);
-    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: loadStores, debts: loadDebts })[d.retry]();
+    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: retryStores, debts: loadDebts })[d.retry]();
   });
 
   // ── Boot ──
-  $('#report-date').value = S.reportDate;
-  renderCart(); renderProducts(); renderShell();
-  (async function boot() {
-    const anyStore = await loadStores();
-    if (!anyStore) { setTab('kasir'); renderBrand(); return; }
+  // Everything after the store list answers: the active store's profile,
+  // then its products, movements, customers and, on Laporan, the reports.
+  // Shared by boot and by the gate's Coba lagi, which may find stores.
+  async function afterStores() {
     setTab(location.hash.slice(1));
     await loadStore(); loadProducts(); loadMovements(); loadCustomers();
     if (S.tab === 'laporan') { loadReport(); loadDebts(); }
+  }
+  async function retryStores() {
+    if (await loadStores()) await afterStores();
+  }
+  $('#report-date').value = S.reportDate;
+  renderCart(); renderProducts(); renderShell();
+  (async function boot() {
+    if (!(await loadStores())) { setTab('kasir'); renderBrand(); return; }
+    await afterStores();
   })();
 })();
