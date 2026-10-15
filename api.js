@@ -119,6 +119,9 @@ ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(i
 -- the same reference returns the sale already recorded instead of a second one.
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS client_ref TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS sales_store_client_ref ON sales (store_id, client_ref) WHERE client_ref IS NOT NULL;
+-- Optional BRI account number shown on the checkout screen when a customer
+-- pays by bank transfer. Empty means the store has not filled it in.
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS bri_account TEXT;
 `;
 
 // One-time legacy migration: the old single-shop `store_profile` row (id = 1)
@@ -163,8 +166,11 @@ async function migrateSkuUnique(pool) {
 
 // Obviously fake demo shop for staging previews. Idempotent. Rows belong to a
 // fixed fake owner, never the visitor, so the signed-in reviewer still sees the
-// honest "Belum ada toko" screen and can create their own stores.
-const DEMO_OWNER_ID = 900001;
+// honest "Belum ada toko" screen and can create their own stores. The owner id
+// sits far from any real or fixture account id (the platform's staging fixture
+// account is 900001): a collision here would hand the demo shops to whoever is
+// signed in, hiding the first-store gate.
+const DEMO_OWNER_ID = 987654321;
 const DEMO_STORE_1 = 900001;
 const DEMO_STORE_2 = 900002;
 const DEMO_PRODUCTS = [
@@ -195,6 +201,11 @@ async function seedDemo(pool) {
      ON CONFLICT (id) DO NOTHING`, [DEMO_STORE_2, DEMO_OWNER_ID]);
   await pool.query(
     `SELECT setval(pg_get_serial_sequence('stores','id'), GREATEST((SELECT MAX(id) FROM stores), 1))`);
+  // Demo store 1 gets an obviously fake BRI account so the filled-in
+  // transfer instruction can be seen; store 2 stays without one on purpose.
+  await pool.query(
+    `UPDATE stores SET bri_account = '0000-01-000000-00-0' WHERE id = $1 AND bri_account IS NULL`,
+    [DEMO_STORE_1]);
   for (const [sku, name, category, cost, sell, stock, min] of DEMO_PRODUCTS) {
     await pool.query(
       `INSERT INTO products (store_id, sku, name, category, cost_price, sell_price, stock, min_stock)
@@ -252,7 +263,7 @@ function mountApi({ app, pool, IS_STAGING }) {
   });
   const storeRow = (r) => ({
     id: r.id, name: r.name, address: r.address, phone: r.phone, logoUrl: r.logo_url,
-    taxPercent: Number(r.tax_percent), staging: IS_STAGING,
+    taxPercent: Number(r.tax_percent), briAccount: r.bri_account || '', staging: IS_STAGING,
   });
   const saleRow = (r) => ({
     id: r.id, invoiceNo: r.invoice_no, createdAt: r.created_at, cashier: r.cashier, subtotal: r.subtotal,
@@ -310,7 +321,10 @@ function mountApi({ app, pool, IS_STAGING }) {
     if (logoUrl && !/^(https?:\/\/|\/)/.test(logoUrl)) throw bad('Logo tidak valid');
     const tax = Number(b.taxPercent);
     if (!Number.isFinite(tax) || tax < 0 || tax > 100) throw bad('PPN harus antara 0 dan 100');
-    return { name, address, phone, logoUrl, tax };
+    const briAccount = text(b.briAccount, 'No. rekening BRI', { max: 30 });
+    if (briAccount && !/^[0-9 .\-]+$/.test(briAccount))
+      throw bad('No. rekening BRI hanya boleh berisi angka, spasi dan tanda hubung');
+    return { name, address, phone, logoUrl, tax, briAccount: briAccount || null };
   }
 
   app.post('/api/stores', h(async (req, res) => {
@@ -318,9 +332,9 @@ function mountApi({ app, pool, IS_STAGING }) {
     const owner = req.user && req.user.id != null ? req.user.id : null;
     if (owner == null) throw new HttpError(401, 'account_required');
     const { rows } = await pool.query(
-      `INSERT INTO stores (owner_id, name, address, phone, logo_url, tax_percent)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [owner, s.name, s.address, s.phone, s.logoUrl, s.tax]);
+      `INSERT INTO stores (owner_id, name, address, phone, logo_url, tax_percent, bri_account)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [owner, s.name, s.address, s.phone, s.logoUrl, s.tax, s.briAccount]);
     res.status(201).json(storeRow(rows[0]));
   }));
 
@@ -338,9 +352,9 @@ function mountApi({ app, pool, IS_STAGING }) {
     if (!req.store) throw new HttpError(404, 'Toko tidak ditemukan');
     const s = readStore(req.body || {});
     const { rows } = await pool.query(
-      `UPDATE stores SET name=$1, address=$2, phone=$3, logo_url=$4, tax_percent=$5
-       WHERE id=$6 RETURNING *`,
-      [s.name, s.address, s.phone, s.logoUrl, s.tax, req.store.id]);
+      `UPDATE stores SET name=$1, address=$2, phone=$3, logo_url=$4, tax_percent=$5, bri_account=$6
+       WHERE id=$7 RETURNING *`,
+      [s.name, s.address, s.phone, s.logoUrl, s.tax, s.briAccount, req.store.id]);
     res.json(storeRow(rows[0]));
   }));
 

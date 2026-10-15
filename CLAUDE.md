@@ -133,7 +133,7 @@ Re-theme by changing the token values there, keeping every text pair at
 ## App-specific conventions
 
 - **Stores own everything.** `stores.owner_id` is the Homeroom `req.user.id`; every business table (`products`, `stock_movements`, `sales`, `sale_items`) carries `store_id` and every query filters on it. The active store is named by the `x-usernode-store` header (or `?store=` on a GET), validated against the caller's ownership; with none named the caller's oldest store is used. A caller who owns no store gets an honest empty answer, never another owner's data.
-- All business tables are `staging:private`, so staging copies them schema-only; the `IS_STAGING` seed in `api.js` fills obviously fake rows owned by `staging-demo-owner` (id 900001), never the visitor.
+- All business tables are `staging:private`, so staging copies them schema-only; the `IS_STAGING` seed in `api.js` fills obviously fake rows owned by `staging-demo-owner` (id 987654321, kept clear of the platform's fixture account ids), never the visitor.
 - UI copy is Indonesian. Money is whole rupiah (integers), shown as `Rp 10.000`.
 - Omzet = sales after discount, before PPN. HPP = cost price at the time of sale. Laba kotor = omzet - HPP.
 - "Retur" is a return to the supplier (stock decreases). Low stock means stock below the product's minimum.
