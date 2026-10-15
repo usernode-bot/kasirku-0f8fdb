@@ -199,6 +199,7 @@
             <button type="button" data-method="qris" class="seg">QRIS</button>
             <button type="button" data-method="debit" class="seg">Debit</button>
             <button type="button" data-method="transfer" class="seg">Transfer bank</button>
+            <button type="button" data-method="credit" class="seg col-span-2">Bayar nanti</button>
           </div>
         </fieldset>
 
@@ -207,6 +208,13 @@
           <input id="cash-paid" class="field" inputmode="numeric" placeholder="e.g. 100000" autocomplete="off">
           <div id="cash-quick" class="flex flex-wrap gap-2"></div>
           <div class="flex justify-between text-body"><span class="text-muted">Uang kembalian</span><strong id="t-change">Rp 0</strong></div>
+        </div>
+
+        <div id="credit-box" class="flex flex-col gap-2" hidden>
+          <label for="credit-name" class="section-label mb-0 block">Nama pelanggan</label>
+          <input id="credit-name" class="field" list="customer-list" maxlength="80" placeholder="e.g. Pak Budi" autocomplete="off">
+          <datalist id="customer-list"></datalist>
+          <p class="text-small text-muted">Total belanja dicatat sebagai piutang pelanggan ini. Catat pembayarannya nanti di Laporan.</p>
         </div>
 
         <p id="pay-hint" class="text-small text-muted" aria-live="polite"></p>
@@ -242,6 +250,7 @@
         </div>
       </div>
       <div id="report-body"></div>
+      <div id="debt-body"></div>
     </section>
   </main>
 </div>
@@ -360,6 +369,26 @@
     <div class="flex justify-end gap-2">
       <button type="button" data-close class="btn-secondary">Batal</button>
       <button type="submit" class="btn-primary">Simpan toko</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-debt-pay" class="dlg">
+  <form id="form-debt-pay" class="flex flex-col gap-3 p-5" novalidate>
+    <div>
+      <h2 class="text-heading">Catat pembayaran piutang</h2>
+      <p id="dp-customer" class="text-small text-muted"></p>
+    </div>
+    <div>
+      <label for="dp-amount" class="section-label block">Jumlah dibayar (Rp)</label>
+      <input id="dp-amount" class="field" inputmode="numeric" placeholder="e.g. 20000">
+    </div>
+    <div><button type="button" id="dp-full" class="btn-secondary">Lunasi</button></div>
+    <p id="dp-preview" class="text-small text-muted" aria-live="polite"></p>
+    <p data-err role="alert" class="text-small text-danger"></p>
+    <div class="flex justify-end gap-2">
+      <button type="button" data-close class="btn-secondary">Batal</button>
+      <button type="submit" class="btn-primary">Simpan pembayaran</button>
     </div>
   </form>
 </dialog>

@@ -9,7 +9,7 @@
   const rp = (n) => (n < 0 ? '-Rp ' : 'Rp ') + Math.abs(Math.round(n)).toLocaleString('id-ID');
   const digits = (v) => parseInt(String(v).replace(/\D/g, ''), 10) || 0;
   const dec = (v) => { const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
-  const METHODS = { cash: 'Tunai', qris: 'QRIS', debit: 'Debit', transfer: 'Transfer bank' };
+  const METHODS = { cash: 'Tunai', qris: 'QRIS', debit: 'Debit', transfer: 'Transfer bank', credit: 'Bayar nanti' };
   const MOVES = { restock: 'Barang masuk', return: 'Retur', opname: 'Stok opname', sale: 'Penjualan' };
 
   const now = () => (window.usernode && usernode.now ? usernode.now() : new Date());
@@ -72,8 +72,10 @@
     tab: 'kasir', stores: [], storesState: 'loading', activeStoreId: readSavedStore(),
     store: null, products: [], productsState: 'loading', q: '', cat: 'Semua', stockQ: '',
     cart: [], discType: 'none', discValue: 0, taxPct: 11, method: 'cash', paid: 0, paying: false,
+    customerName: '', customers: [],
     checkoutRef: null, payUncertain: false,
     movements: null, movementsState: 'loading', report: null, reportState: 'loading', reportDate: today(),
+    debts: null, debtsState: 'loading', debtRef: null, debtCustomerId: null,
     receipt: null,
   };
   const hasStore = () => !!S.activeStoreId;
@@ -159,6 +161,23 @@
     S.reportState = 'loading'; renderReport();
     try { S.report = await api('/api/reports?date=' + encodeURIComponent(S.reportDate)); S.reportState = 'ok'; } catch (e) { S.reportState = 'error'; }
     renderReport();
+  }
+  // Names for the checkout datalist, so a returning customer stays one person.
+  async function loadCustomers() {
+    if (!hasStore()) { S.customers = []; fillCustomerList(); return; }
+    try { S.customers = (await api('/api/customers')).customers; } catch (e) { S.customers = []; }
+    fillCustomerList();
+  }
+  function fillCustomerList() {
+    $('#customer-list').innerHTML = S.customers.map((c) => '<option value="' + esc(c.name) + '"></option>').join('');
+  }
+  // The Piutang pelanggan list: what each customer of the active store still
+  // owes today. It does not follow the report date picker.
+  async function loadDebts() {
+    if (!hasStore()) { S.debts = null; S.debtsState = 'ok'; renderDebts(); return; }
+    S.debtsState = 'loading'; renderDebts();
+    try { S.debts = await api('/api/debts'); S.debtsState = 'ok'; } catch (e) { S.debtsState = 'error'; }
+    renderDebts();
   }
 
   // ── Shell: the no-store gate vs the tabs ──
@@ -299,10 +318,14 @@
     S.activeStoreId = id; saveStore(id);
     // A cart belongs to one store: never shop two stores in one transaction.
     S.cart = []; S.paid = 0; S.cat = 'Semua'; S.q = ''; $('#cash-paid').value = ''; $('#pos-search').value = '';
+    // A customer on a not-yet-recorded credit sale belongs to the old store too.
+    S.customerName = ''; $('#credit-name').value = '';
+    S.debts = null;
     cartChanged();
     renderShell(); $('#dlg-stores').close();
     toast('Toko aktif: ' + ((S.stores.find((s) => s.id === id) || {}).name || ''));
-    await loadStore(); loadProducts(); loadMovements(); if (S.tab === 'laporan') loadReport();
+    await loadStore(); loadProducts(); loadMovements(); loadCustomers();
+    if (S.tab === 'laporan') { loadReport(); loadDebts(); }
   }
 
   // ── Kasir ──
@@ -398,6 +421,10 @@
     if (free) return 'Isi harga satuan ' + free.name + '.';
     if (t.total > 2000000000) return 'Total transaksi terlalu besar.';
     if (S.method === 'cash' && S.paid < t.total) return 'Uang diterima masih kurang ' + rp(t.total - S.paid) + '.';
+    if (S.method === 'credit') {
+      if (!S.customerName.trim()) return 'Isi nama pelanggan dulu.';
+      if (t.total < 1) return 'Total harus lebih dari Rp 0 untuk bayar nanti.';
+    }
     return '';
   }
 
@@ -433,6 +460,7 @@
     S.cart.forEach((l) => { const el = $('[data-line-total="' + l.id + '"]'); if (el) el.textContent = rp(l.qty * l.price); });
     const cash = S.method === 'cash';
     $('#cash-box').hidden = !cash;
+    $('#credit-box').hidden = S.method !== 'credit';
     const change = S.paid - t.total;
     $('#t-change').textContent = rp(cash && change > 0 ? change : 0);
     const quick = [t.total, Math.ceil(t.total / 10000) * 10000, Math.ceil(t.total / 50000) * 50000, Math.ceil(t.total / 100000) * 100000];
@@ -448,7 +476,8 @@
     hint.classList.toggle('text-danger', !!blocking);
     hint.classList.toggle('text-muted', !blocking);
     $('#pay-btn').disabled = S.paying || !!problem;
-    $('#pay-btn').textContent = S.paying ? 'Memproses…' : S.payUncertain ? 'Coba bayar lagi' : 'Bayar' + (t.total ? ' ' + rp(t.total) : '');
+    const payLabel = S.method === 'credit' ? 'Catat piutang' : 'Bayar';
+    $('#pay-btn').textContent = S.paying ? 'Memproses…' : S.payUncertain ? 'Coba bayar lagi' : payLabel + (t.total ? ' ' + rp(t.total) : '');
   }
 
   function newRef() {
@@ -467,17 +496,23 @@
       const { sale } = await api('/api/sales', { method: 'POST', body: {
         items: S.cart.map((l) => ({ productId: l.id, qty: l.qty, price: l.price })),
         discountType: S.discType, discountValue: S.discValue, taxPercent: S.taxPct,
-        paymentMethod: S.method, paid: S.method === 'cash' ? S.paid : t.total, clientRef: S.checkoutRef,
+        paymentMethod: S.method,
+        paid: S.method === 'cash' ? S.paid : S.method === 'credit' ? 0 : t.total,
+        customerName: S.method === 'credit' ? S.customerName.trim() : undefined,
+        clientRef: S.checkoutRef,
       } });
       cartChanged();
       S.cart = []; S.paid = 0; $('#cash-paid').value = '';
+      S.customerName = ''; $('#credit-name').value = '';
       S.discType = 'none'; S.discValue = 0; $('#disc-type').value = 'none'; $('#disc-value').value = ''; $('#disc-value').disabled = true;
       S.paying = false;
       // The first sale completes the checklist: the next render sees hasSales
       // and hides "Langkah awal" for this store for good.
       if (S.store) S.store.hasSales = true;
       renderCart(); loadProducts(); loadMovements();
+      loadCustomers();
       if (S.report) loadReport();
+      if (S.debts) loadDebts();
       toast('Transaksi ' + sale.invoiceNo + ' berhasil');
       showReceipt(sale.id);
     } catch (e) {
@@ -661,9 +696,12 @@
     S.stores.push(created);
     S.activeStoreId = created.id; saveStore(created.id);
     S.cart = []; S.cat = 'Semua'; S.q = ''; cartChanged();
+    S.customerName = ''; $('#credit-name').value = '';
+    S.debts = null;
     renderShell();
     toast('Toko ' + created.name + ' dibuat');
-    await loadStore(); loadProducts(); loadMovements();
+    await loadStore(); loadProducts(); loadMovements(); loadCustomers();
+    if (S.tab === 'laporan') loadDebts();
   }
   $('#form-new-store').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -711,7 +749,9 @@
       + (x.discountAmount ? row('Diskon' + (x.discountType === 'percent' ? ' (' + x.discountValue + '%)' : ''), '-' + rp(x.discountAmount)) : '')
       + row('PPN (' + x.taxPercent + '%)', rp(x.taxAmount)) + row('TOTAL', rp(x.total), true) + rule
       + row('Pembayaran', METHODS[x.paymentMethod])
-      + (x.paymentMethod === 'cash' ? row('Tunai', rp(x.paid)) + row('Kembalian', rp(x.change)) : row('Dibayar', rp(x.paid))) + rule
+      + (x.paymentMethod === 'credit'
+        ? row('Pelanggan', esc(x.customerName || '')) + row('Belum dibayar', rp(x.total))
+        : x.paymentMethod === 'cash' ? row('Tunai', rp(x.paid)) + row('Kembalian', rp(x.change)) : row('Dibayar', rp(x.paid))) + rule
       + '<p class="text-center">Terima kasih telah berbelanja</p><p class="text-center text-muted">Struk dibuat dengan KasirKU</p></div>';
   }
   async function showReceipt(id) {
@@ -726,7 +766,11 @@
     return [s.name || 'KasirKU', s.address, s.phone, '', 'Invoice: ' + x.invoiceNo, 'Tanggal: ' + fmtDateTime(x.createdAt), '']
       .concat(r.items.map((i) => i.name + ' ' + i.qty + ' x ' + rp(i.price) + ' = ' + rp(i.qty * i.price)))
       .concat(['', 'Subtotal: ' + rp(x.subtotal), x.discountAmount ? 'Diskon: -' + rp(x.discountAmount) : '', 'PPN (' + x.taxPercent + '%): ' + rp(x.taxAmount),
-        'TOTAL: ' + rp(x.total), 'Pembayaran: ' + METHODS[x.paymentMethod], x.paymentMethod === 'cash' ? 'Tunai: ' + rp(x.paid) + ', kembalian: ' + rp(x.change) : '', '', 'Terima kasih telah berbelanja'])
+        'TOTAL: ' + rp(x.total), 'Pembayaran: ' + METHODS[x.paymentMethod],
+        x.paymentMethod === 'cash' ? 'Tunai: ' + rp(x.paid) + ', kembalian: ' + rp(x.change)
+          : x.paymentMethod === 'credit' ? 'Pelanggan: ' + (x.customerName || '') : 'Dibayar: ' + rp(x.paid),
+        x.paymentMethod === 'credit' ? 'Belum dibayar: ' + rp(x.total) : '',
+        '', 'Terima kasih telah berbelanja'])
       .filter((l) => l !== undefined && l !== null && (l !== '' || true)).join('\n').replace(/\n{3,}/g, '\n\n');
   }
   $('#receipt-print').addEventListener('click', () => {
@@ -767,9 +811,56 @@
       '<li class="list-row"><span class="grow text-body">' + METHODS[x.method] + '</span><span class="text-small text-muted">' + x.count + ' transaksi</span><span class="w-32 text-right text-body font-medium">' + rp(x.total) + '</span></li>').join('') + '</ul></div>';
     html += '<div><h3 class="section-label">Riwayat transaksi</h3><ul class="list">' + r.sales.map((x) =>
       '<li><button type="button" data-receipt="' + x.id + '" class="list-row w-full text-left hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">'
-      + '<div class="min-w-0 grow"><p class="text-body font-medium">' + esc(x.invoiceNo) + '</p><p class="text-small text-muted">' + fmtTime(x.createdAt) + ' · ' + METHODS[x.paymentMethod] + '</p></div>'
+      + '<div class="min-w-0 grow"><p class="text-body font-medium">' + esc(x.invoiceNo) + '</p><p class="text-small text-muted">' + fmtTime(x.createdAt) + ' · ' + METHODS[x.paymentMethod] + (x.customerName ? ' · ' + esc(x.customerName) : '') + '</p></div>'
       + '<div class="text-right"><p class="text-body font-medium">' + rp(x.total) + '</p><p class="text-small text-muted">Laba ' + rp(x.subtotal - x.discountAmount - x.cogs) + '</p></div></button></li>').join('') + '</ul></div>';
     box.innerHTML = html;
+  }
+
+  // ── Piutang pelanggan ──
+  function renderDebts() {
+    const box = $('#debt-body');
+    if (S.debtsState === 'loading') { box.innerHTML = skeletonRows(2); return; }
+    if (S.debtsState === 'error') { box.innerHTML = errorBox('Daftar piutang', 'debts'); return; }
+    if (!S.debts || !S.debts.debts.length) {
+      box.innerHTML = '<div class="state-empty rounded-xl border border-line bg-surface"><p class="text-heading">Tidak ada piutang</p>'
+        + '<p class="text-body text-muted">Penjualan Bayar nanti dari menu Kasir akan muncul di sini.</p></div>';
+      return;
+    }
+    const d = S.debts;
+    box.innerHTML = '<div><h3 class="section-label flex justify-between"><span>Piutang pelanggan</span>'
+      + '<span>Total ' + rp(d.total) + ' dari ' + d.count + ' pelanggan</span></h3><ul class="list">'
+      + d.debts.map((x) =>
+        '<li class="list-row"><div class="min-w-0 grow"><p class="text-body font-medium">' + esc(x.name) + '</p>'
+        + '<p class="text-small text-muted">Bon terakhir ' + fmtDateTime(x.lastSaleAt) + '</p></div>'
+        + '<p class="shrink-0 text-body font-medium">' + rp(x.owed) + '</p>'
+        + '<button type="button" class="btn-secondary shrink-0" data-pay-debt="' + x.customerId
+        + '" aria-label="Catat bayar piutang ' + esc(x.name) + '">Catat bayar</button></li>').join('')
+      + '</ul></div>';
+  }
+
+  function openDebtPay(customerId) {
+    const d = S.debts && S.debts.debts.find((x) => x.customerId === customerId);
+    if (!d) return;
+    S.debtCustomerId = customerId;
+    // A fresh reference per open: a retried submit reuses it, a reopened
+    // window starts a new payment.
+    S.debtRef = newRef();
+    $('#dp-customer').textContent = d.name + ', sisa ' + rp(d.owed);
+    $('#dp-amount').value = '';
+    const full = $('#dp-full');
+    full.textContent = 'Lunasi ' + rp(d.owed);
+    full.dataset.owed = String(d.owed);
+    debtPreview();
+    openDlg($('#dlg-debt-pay'));
+  }
+  function debtPreview() {
+    const d = S.debts && S.debts.debts.find((x) => x.customerId === S.debtCustomerId);
+    if (!d) return;
+    if ($('#dp-amount').value.trim() === '') { $('#dp-preview').textContent = 'Sisa piutang ' + rp(d.owed) + '.'; return; }
+    const a = digits($('#dp-amount').value);
+    $('#dp-preview').textContent = a > d.owed
+      ? 'Melebihi sisa piutang ' + rp(d.owed) + '.'
+      : 'Sisa piutang menjadi ' + rp(d.owed - a) + '.';
   }
 
   // ── Tabs ──
@@ -780,7 +871,7 @@
     $$('[role=tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
     ['kasir', 'stok', 'laporan'].forEach((t) => { $('#tab-' + t).hidden = t !== tab; });
     if (tab === 'stok' && S.movementsState !== 'ok') loadMovements();
-    if (tab === 'laporan') loadReport();
+    if (tab === 'laporan') { loadReport(); loadDebts(); }
   }
   const goto = (t) => { location.hash = t; };
   window.addEventListener('hashchange', () => setTab(location.hash.slice(1)));
@@ -804,6 +895,32 @@
   $('#disc-value').addEventListener('input', (e) => { S.discValue = Math.max(0, dec(e.target.value)); cartChanged(); updateTotals(); });
   $('#tax-pct').addEventListener('input', (e) => { S.taxPct = Math.min(100, Math.max(0, dec(e.target.value))); cartChanged(); updateTotals(); });
   $('#cash-paid').addEventListener('input', (e) => { S.paid = digits(e.target.value); cartChanged(); updateTotals(); });
+  $('#credit-name').addEventListener('input', (e) => { S.customerName = e.target.value; cartChanged(); updateTotals(); });
+  $('#dp-amount').addEventListener('input', debtPreview);
+  $('#dp-full').addEventListener('click', () => {
+    const d = S.debts && S.debts.debts.find((x) => x.customerId === S.debtCustomerId);
+    if (!d) return;
+    $('#dp-amount').value = String(d.owed);
+    debtPreview();
+  });
+  $('#form-debt-pay').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const d = S.debts && S.debts.debts.find((x) => x.customerId === S.debtCustomerId);
+    if (!d) return;
+    if ($('#dp-amount').value.trim() === '') return setErr($('#dlg-debt-pay'), 'Isi jumlahnya dulu.');
+    const amount = digits($('#dp-amount').value);
+    if (amount < 1) return setErr($('#dlg-debt-pay'), 'Jumlah dibayar tidak valid.');
+    const btn = $('#form-debt-pay button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const out = await api('/api/debts/' + S.debtCustomerId + '/payments', {
+        method: 'POST', body: { amount, clientRef: S.debtRef } });
+      $('#dlg-debt-pay').close();
+      toast(out.owed === 0 ? 'Piutang ' + d.name + ' lunas' : 'Pembayaran dicatat');
+      loadDebts();
+    } catch (err) { setErr($('#dlg-debt-pay'), err.message); }
+    finally { btn.disabled = false; }
+  });
 
   // Typing in a cart line only updates numbers, so the field keeps focus.
   $('#cart-lines').addEventListener('input', (e) => {
@@ -838,8 +955,9 @@
     else if (t.hasAttribute('data-new-store')) openNewStore();
     else if (t.hasAttribute('data-new-product')) openProduct(null);
     else if (d.receipt) showReceipt(Number(d.receipt));
+    else if (d.payDebt) openDebtPay(Number(d.payDebt));
     else if (d.goto) goto(d.goto);
-    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: loadStores })[d.retry]();
+    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: loadStores, debts: loadDebts })[d.retry]();
   });
 
   // ── Boot ──
@@ -849,7 +967,7 @@
     const anyStore = await loadStores();
     if (!anyStore) { setTab('kasir'); renderBrand(); return; }
     setTab(location.hash.slice(1));
-    await loadStore(); loadProducts(); loadMovements();
-    if (S.tab === 'laporan') loadReport();
+    await loadStore(); loadProducts(); loadMovements(); loadCustomers();
+    if (S.tab === 'laporan') { loadReport(); loadDebts(); }
   })();
 })();
