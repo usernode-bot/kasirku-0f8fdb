@@ -199,6 +199,7 @@
             <button type="button" data-method="qris" class="seg">QRIS</button>
             <button type="button" data-method="debit" class="seg">Debit</button>
             <button type="button" data-method="transfer" class="seg">Transfer bank</button>
+            <button type="button" data-method="bri" class="seg col-span-2">Transfer BRI</button>
           </div>
         </fieldset>
 
@@ -207,6 +208,11 @@
           <input id="cash-paid" class="field" inputmode="numeric" placeholder="e.g. 100000" autocomplete="off">
           <div id="cash-quick" class="flex flex-wrap gap-2"></div>
           <div class="flex justify-between text-body"><span class="text-muted">Uang kembalian</span><strong id="t-change">Rp 0</strong></div>
+        </div>
+
+        <div id="bri-box" class="flex flex-col gap-2" hidden>
+          <p class="section-label mb-0">Transfer ke rekening BRI</p>
+          <div id="bri-details"></div>
         </div>
 
         <p id="pay-hint" class="text-small text-muted" aria-live="polite"></p>
@@ -321,6 +327,14 @@
           <button type="button" id="s-logo-remove" class="btn-secondary" hidden>Hapus logo</button>
         </div>
         <p class="mt-1 text-small text-muted">Tanpa logo unggahan, struk memakai logo KasirKU.</p>
+      </div>
+      <div class="flex flex-col gap-3 border-t border-line pt-3">
+        <div>
+          <p class="text-body font-medium">Rekening BRI</p>
+          <p class="text-small text-muted">Ditampilkan di kasir saat pembeli memilih Transfer BRI.</p>
+        </div>
+        <div><label for="s-bri-no" class="section-label mb-1 block">Nomor rekening BRI</label><input id="s-bri-no" class="field" maxlength="40" inputmode="numeric" autocomplete="off" placeholder="e.g. 0123 0100 0456 307"></div>
+        <div><label for="s-bri-name" class="section-label mb-1 block">Nama pemilik rekening</label><input id="s-bri-name" class="field" maxlength="80" autocomplete="off" placeholder="e.g. Budi Santoso"></div>
       </div>
     </div>
     <div class="flex shrink-0 flex-col gap-2 border-t border-line px-4 py-3">

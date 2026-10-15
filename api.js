@@ -4,7 +4,7 @@
 // as whole rupiah (integers). The server always recomputes totals, stock and
 // cost of goods from its own data.
 const TZ = 'Asia/Jakarta';
-const PAYMENT_METHODS = ['cash', 'qris', 'debit', 'transfer'];
+const PAYMENT_METHODS = ['cash', 'qris', 'debit', 'transfer', 'bri'];
 const MOVEMENT_TYPES = ['restock', 'return', 'opname'];
 
 class HttpError extends Error {
@@ -119,6 +119,10 @@ ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(i
 -- the same reference returns the sale already recorded instead of a second one.
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS client_ref TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS sales_store_client_ref ON sales (store_id, client_ref) WHERE client_ref IS NOT NULL;
+-- The store's BRI account, shown at checkout for "Transfer BRI". Empty until
+-- the owner fills it in under Profil toko.
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS bri_account_no TEXT NOT NULL DEFAULT '';
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS bri_account_name TEXT NOT NULL DEFAULT '';
 `;
 
 // One-time legacy migration: the old single-shop `store_profile` row (id = 1)
@@ -252,7 +256,8 @@ function mountApi({ app, pool, IS_STAGING }) {
   });
   const storeRow = (r) => ({
     id: r.id, name: r.name, address: r.address, phone: r.phone, logoUrl: r.logo_url,
-    taxPercent: Number(r.tax_percent), staging: IS_STAGING,
+    taxPercent: Number(r.tax_percent), briAccountNo: r.bri_account_no || '', briAccountName: r.bri_account_name || '',
+    staging: IS_STAGING,
   });
   const saleRow = (r) => ({
     id: r.id, invoiceNo: r.invoice_no, createdAt: r.created_at, cashier: r.cashier, subtotal: r.subtotal,
@@ -310,7 +315,12 @@ function mountApi({ app, pool, IS_STAGING }) {
     if (logoUrl && !/^(https?:\/\/|\/)/.test(logoUrl)) throw bad('Logo tidak valid');
     const tax = Number(b.taxPercent);
     if (!Number.isFinite(tax) || tax < 0 || tax > 100) throw bad('PPN harus antara 0 dan 100');
-    return { name, address, phone, logoUrl, tax };
+    // Account number is kept as digits only; spaces and dashes are accepted on input.
+    const briNo = text(b.briAccountNo, 'Nomor rekening BRI', { max: 40 }).replace(/[\s.-]/g, '');
+    if (briNo && !/^\d{10,20}$/.test(briNo)) throw bad('Nomor rekening BRI harus 10 sampai 20 angka');
+    const briName = text(b.briAccountName, 'Nama pemilik rekening', { max: 80 });
+    if (!briNo !== !briName) throw bad('Isi nomor rekening BRI dan nama pemilik rekening, atau kosongkan keduanya');
+    return { name, address, phone, logoUrl, tax, briNo, briName };
   }
 
   app.post('/api/stores', h(async (req, res) => {
@@ -318,9 +328,9 @@ function mountApi({ app, pool, IS_STAGING }) {
     const owner = req.user && req.user.id != null ? req.user.id : null;
     if (owner == null) throw new HttpError(401, 'account_required');
     const { rows } = await pool.query(
-      `INSERT INTO stores (owner_id, name, address, phone, logo_url, tax_percent)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [owner, s.name, s.address, s.phone, s.logoUrl, s.tax]);
+      `INSERT INTO stores (owner_id, name, address, phone, logo_url, tax_percent, bri_account_no, bri_account_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [owner, s.name, s.address, s.phone, s.logoUrl, s.tax, s.briNo, s.briName]);
     res.status(201).json(storeRow(rows[0]));
   }));
 
@@ -338,9 +348,10 @@ function mountApi({ app, pool, IS_STAGING }) {
     if (!req.store) throw new HttpError(404, 'Toko tidak ditemukan');
     const s = readStore(req.body || {});
     const { rows } = await pool.query(
-      `UPDATE stores SET name=$1, address=$2, phone=$3, logo_url=$4, tax_percent=$5
-       WHERE id=$6 RETURNING *`,
-      [s.name, s.address, s.phone, s.logoUrl, s.tax, req.store.id]);
+      `UPDATE stores SET name=$1, address=$2, phone=$3, logo_url=$4, tax_percent=$5,
+         bri_account_no=$6, bri_account_name=$7
+       WHERE id=$8 RETURNING *`,
+      [s.name, s.address, s.phone, s.logoUrl, s.tax, s.briNo, s.briName, req.store.id]);
     res.json(storeRow(rows[0]));
   }));
 

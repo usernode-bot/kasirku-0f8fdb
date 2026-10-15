@@ -9,7 +9,7 @@
   const rp = (n) => (n < 0 ? '-Rp ' : 'Rp ') + Math.abs(Math.round(n)).toLocaleString('id-ID');
   const digits = (v) => parseInt(String(v).replace(/\D/g, ''), 10) || 0;
   const dec = (v) => { const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
-  const METHODS = { cash: 'Tunai', qris: 'QRIS', debit: 'Debit', transfer: 'Transfer bank' };
+  const METHODS = { cash: 'Tunai', qris: 'QRIS', debit: 'Debit', transfer: 'Transfer bank', bri: 'Transfer BRI' };
   const MOVES = { restock: 'Barang masuk', return: 'Retur', opname: 'Stok opname', sale: 'Penjualan' };
 
   const now = () => (window.usernode && usernode.now ? usernode.now() : new Date());
@@ -433,6 +433,8 @@
     S.cart.forEach((l) => { const el = $('[data-line-total="' + l.id + '"]'); if (el) el.textContent = rp(l.qty * l.price); });
     const cash = S.method === 'cash';
     $('#cash-box').hidden = !cash;
+    $('#bri-box').hidden = S.method !== 'bri';
+    if (S.method === 'bri') renderBri(t);
     const change = S.paid - t.total;
     $('#t-change').textContent = rp(cash && change > 0 ? change : 0);
     const quick = [t.total, Math.ceil(t.total / 10000) * 10000, Math.ceil(t.total / 50000) * 50000, Math.ceil(t.total / 100000) * 100000];
@@ -449,6 +451,45 @@
     hint.classList.toggle('text-muted', !blocking);
     $('#pay-btn').disabled = S.paying || !!problem;
     $('#pay-btn').textContent = S.paying ? 'Memproses…' : S.payUncertain ? 'Coba bayar lagi' : 'Bayar' + (t.total ? ' ' + rp(t.total) : '');
+  }
+
+  // ── Transfer BRI: the store's account, shown while that method is chosen ──
+  const briParts = (no) => no.replace(/(\d{4})(?=\d)/g, '$1 ');
+  function renderBri(t) {
+    const s = S.store || {};
+    const box = $('#bri-details');
+    if (!s.briAccountNo || !s.briAccountName) {
+      box.innerHTML = '<div class="flex flex-col items-start gap-2 rounded-lg border border-dashed border-line p-3">'
+        + '<p class="text-body font-medium">Rekening BRI belum diisi</p>'
+        + '<p class="text-small text-muted">Isi nomor rekening dan nama pemilik di Profil toko supaya pembeli tahu ke mana harus transfer.</p>'
+        + '<button type="button" class="btn-secondary" data-bri-setup>Isi rekening BRI</button></div>';
+      return;
+    }
+    box.innerHTML = '<dl class="divide-y divide-line border-y border-line">'
+      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Bank</dt><dd class="text-body">BRI (Bank Rakyat Indonesia)</dd></div>'
+      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Nomor rekening</dt><dd class="flex items-center gap-2">'
+      + '<span class="whitespace-nowrap font-mono text-body font-medium" id="bri-no">' + esc(briParts(s.briAccountNo)) + '</span>'
+      + '<button type="button" class="btn-secondary" data-bri-copy aria-label="Salin nomor rekening BRI">Salin</button></dd></div>'
+      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Atas nama</dt><dd class="text-body">' + esc(s.briAccountName) + '</dd></div>'
+      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Jumlah transfer</dt><dd class="text-heading" id="bri-total">' + rp(t.total) + '</dd></div>'
+      + '</dl>';
+  }
+  async function copyBriNo() {
+    const no = (S.store && S.store.briAccountNo) || '';
+    if (!no) return;
+    try {
+      await navigator.clipboard.writeText(no);
+      toast('Nomor rekening BRI disalin');
+    } catch (_) {
+      // Older WebViews: fall back to a selected textarea.
+      const ta = document.createElement('textarea');
+      ta.value = no; ta.setAttribute('readonly', ''); ta.className = 'sr-only';
+      document.body.appendChild(ta); ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (_e) {}
+      ta.remove();
+      toast(ok ? 'Nomor rekening BRI disalin' : 'Nomor rekening tidak bisa disalin dari sini');
+    }
   }
 
   function newRef() {
@@ -619,6 +660,7 @@
     const s = S.store || {};
     $('#s-name').value = s.name || ''; $('#s-address').value = s.address || ''; $('#s-phone').value = s.phone || '';
     $('#s-tax').value = s.taxPercent != null ? s.taxPercent : 11; logoDraft = s.logoUrl || '';
+    $('#s-bri-no').value = s.briAccountNo ? briParts(s.briAccountNo) : ''; $('#s-bri-name').value = s.briAccountName || '';
     renderLogoDraft(); openDlg($('#dlg-store'));
   }
   $('#open-store').addEventListener('click', openStoreProfile);
@@ -638,7 +680,8 @@
     const name = $('#s-name').value.trim();
     if (!name) return setErr($('#dlg-store'), 'Nama toko wajib diisi.');
     try {
-      const saved = await api('/api/store', { method: 'PUT', body: { name, address: $('#s-address').value.trim(), phone: $('#s-phone').value.trim(), logoUrl: logoDraft, taxPercent: dec($('#s-tax').value) } });
+      const saved = await api('/api/store', { method: 'PUT', body: { name, address: $('#s-address').value.trim(), phone: $('#s-phone').value.trim(), logoUrl: logoDraft, taxPercent: dec($('#s-tax').value),
+        briAccountNo: $('#s-bri-no').value.trim(), briAccountName: $('#s-bri-name').value.trim() } });
       // The PUT response carries no hasSales; keep the loaded one so the
       // checklist state survives editing the profile.
       S.store = Object.assign({}, S.store, saved);
@@ -839,6 +882,8 @@
     else if (t.hasAttribute('data-new-product')) openProduct(null);
     else if (d.receipt) showReceipt(Number(d.receipt));
     else if (d.goto) goto(d.goto);
+    else if (t.hasAttribute('data-bri-copy')) copyBriNo();
+    else if (t.hasAttribute('data-bri-setup')) { openStoreProfile(); $('#s-bri-no').focus(); }
     else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: loadStores })[d.retry]();
   });
 
