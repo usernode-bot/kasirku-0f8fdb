@@ -181,7 +181,7 @@ const DEMO_PRODUCTS = [
   ['DEMO-011', 'Keripik Singkong 150 g', 'Makanan', 8200, 11000, 15, 6],
   ['DEMO-012', 'Sabun Mandi Batang', 'Rumah Tangga', 3000, 4500, 36, 12],
   ['DEMO-013', 'Deterjen Bubuk 800 g', 'Rumah Tangga', 17500, 21500, 0, 5],
-  ['DEMO-014', 'Tisu Gulung Isi 4', 'Rumah Tangga', 11000, 14500, 12, 5],
+  ['DEMO-014', 'Tisu Gulung Isi 4', 'Rumah Tangga', 11000, 14500, 5, 5],
 ];
 
 async function seedDemo(pool) {
@@ -248,7 +248,9 @@ function mountApi({ app, pool, IS_STAGING }) {
   const productRow = (r) => ({
     id: r.id, name: r.name, sku: r.sku, category: r.category, costPrice: r.cost_price,
     sellPrice: r.sell_price, stock: r.stock, minStock: r.min_stock,
-    low: r.stock < r.min_stock, out: r.stock <= 0,
+    // "Low" means at or below the threshold: sitting exactly at the minimum is
+    // already the reorder point. Out keeps its stronger own flag.
+    low: r.stock <= r.min_stock, out: r.stock <= 0,
   });
   const storeRow = (r) => ({
     id: r.id, name: r.name, address: r.address, phone: r.phone, logoUrl: r.logo_url,
