@@ -191,11 +191,12 @@ async function migrateSkuUnique(pool) {
 // Obviously fake demo shop for staging previews. Idempotent. Rows belong to a
 // fixed fake owner, never the visitor, so the signed-in reviewer still sees the
 // honest "Belum ada toko" screen and can create their own stores. The id must
-// not collide with any real or capture account's id (the local check harness
-// signs its viewer in as 900001), or that account would own the demo rows.
-const DEMO_OWNER_ID = 899999;
-const DEMO_STORE_1 = 900001;
-const DEMO_STORE_2 = 900002;
+// stay clear of the sign-in fixture account the local launch uses (900001,
+// staging-demo-viewer): if the signed-in account owned these rows, the
+// first-store screen and the dapp.json checks that pin it could never be seen.
+const DEMO_OWNER_ID = 900100;
+const DEMO_STORE_1 = 900100;
+const DEMO_STORE_2 = 900101;
 const DEMO_PRODUCTS = [
   ['DEMO-001', 'Beras Premium 5 kg', 'Sembako', 58000, 68000, 24, 6],
   ['DEMO-002', 'Minyak Goreng 2 L', 'Sembako', 32000, 37500, 18, 6],
@@ -728,32 +729,40 @@ function mountApi({ app, pool, IS_STAGING }) {
     } finally { client.release(); }
   }));
 
-  // Daily report. Omzet = sales after discount, before PPN; PPN is collected
-  // for the state and is not revenue. Laba kotor = omzet minus HPP.
+  // Daily or monthly report. Omzet = sales after discount, before PPN; PPN is
+  // collected for the state and is not revenue. Laba kotor = omzet minus HPP.
+  // A day or month is named on the Asia/Jakarta calendar.
   app.get('/api/reports', h(async (req, res) => {
+    const mode = req.query.mode === 'monthly' ? 'monthly' : 'daily';
     const date = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
       ? req.query.date : jakartaDate(req.now);
+    const month = typeof req.query.month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(req.query.month)
+      ? req.query.month : jakartaDate(req.now).slice(0, 7);
     if (!req.store) {
-      return res.json({ date, summary: { count: 0, revenue: 0, cogs: 0, grossProfit: 0, tax: 0, discount: 0, total: 0 },
+      return res.json({ mode, ...(mode === 'monthly' ? { month } : { date }),
+        summary: { count: 0, revenue: 0, cogs: 0, grossProfit: 0, tax: 0, discount: 0, total: 0 },
         byMethod: [], sales: [] });
     }
     const storeId = req.store.id;
+    const param = mode === 'monthly' ? month : date;
     // Columns are qualified because customers also has created_at and store_id.
-    const day = `(s.created_at AT TIME ZONE '${TZ}')::date = $1::date AND s.store_id = $2`;
+    const day = `${mode === 'monthly'
+      ? `to_char(s.created_at AT TIME ZONE '${TZ}', 'YYYY-MM') = $1`
+      : `(s.created_at AT TIME ZONE '${TZ}')::date = $1::date`} AND s.store_id = $2`;
     const sum = (await pool.query(
       `SELECT COUNT(*)::int AS count, COALESCE(SUM(s.subtotal - s.discount_amount),0)::bigint AS revenue,
               COALESCE(SUM(s.cogs),0)::bigint AS cogs, COALESCE(SUM(s.tax_amount),0)::bigint AS tax,
               COALESCE(SUM(s.discount_amount),0)::bigint AS discount, COALESCE(SUM(s.total),0)::bigint AS total
-       FROM sales s WHERE ${day}`, [date, storeId])).rows[0];
+       FROM sales s WHERE ${day}`, [param, storeId])).rows[0];
     const methods = await pool.query(
       `SELECT s.payment_method, COUNT(*)::int AS count, SUM(s.total)::bigint AS total FROM sales s
-       WHERE ${day} GROUP BY s.payment_method ORDER BY s.payment_method`, [date, storeId]);
+       WHERE ${day} GROUP BY s.payment_method ORDER BY s.payment_method`, [param, storeId]);
     const list = await pool.query(
       `SELECT s.*, c.name AS customer_name FROM sales s LEFT JOIN customers c ON c.id = s.customer_id
-       WHERE ${day} ORDER BY s.id DESC LIMIT 200`, [date, storeId]);
+       WHERE ${day} ORDER BY s.id DESC LIMIT 200`, [param, storeId]);
     const revenue = Number(sum.revenue); const cogs = Number(sum.cogs);
     res.json({
-      date,
+      mode, ...(mode === 'monthly' ? { month } : { date }),
       summary: { count: sum.count, revenue, cogs, grossProfit: revenue - cogs, tax: Number(sum.tax),
         discount: Number(sum.discount), total: Number(sum.total) },
       byMethod: methods.rows.map((m) => ({ method: m.payment_method, count: m.count, total: Number(m.total) })),

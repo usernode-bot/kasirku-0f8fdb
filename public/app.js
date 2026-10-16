@@ -76,6 +76,7 @@
     checkoutRef: null, payUncertain: false,
     movements: null, movementsState: 'loading', report: null, reportState: 'loading', reportDate: today(),
     debts: null, debtsState: 'loading', debtRef: null, debtCustomerId: null,
+    reportMode: 'daily', reportMonth: today().slice(0, 7),
     receipt: null,
   };
   const hasStore = () => !!S.activeStoreId;
@@ -159,7 +160,10 @@
   async function loadReport() {
     if (!hasStore()) { S.report = null; S.reportState = 'loading'; renderReport(); return; }
     S.reportState = 'loading'; renderReport();
-    try { S.report = await api('/api/reports?date=' + encodeURIComponent(S.reportDate)); S.reportState = 'ok'; } catch (e) { S.reportState = 'error'; }
+    const url = S.reportMode === 'monthly'
+      ? '/api/reports?mode=monthly&month=' + encodeURIComponent(S.reportMonth)
+      : '/api/reports?date=' + encodeURIComponent(S.reportDate);
+    try { S.report = await api(url); S.reportState = 'ok'; } catch (e) { S.reportState = 'error'; }
     renderReport();
   }
   // Names for the checkout datalist, so a returning customer stays one person.
@@ -815,12 +819,19 @@
   });
 
   // ── Laporan ──
+  function renderReportPeriod() {
+    $$('#report-mode [data-mode]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === S.reportMode)));
+    $('#report-date-wrap').hidden = S.reportMode !== 'daily';
+    $('#report-month-wrap').hidden = S.reportMode !== 'monthly';
+  }
   function renderReport() {
     const box = $('#report-body');
     if (S.reportState === 'loading') { box.innerHTML = skeletonRows(4); return; }
     if (S.reportState === 'error') { box.innerHTML = errorBox('Laporan penjualan', 'report'); return; }
     if (!S.report) { box.innerHTML = ''; return; }
     const r = S.report; const m = r.summary;
+    const monthly = r.mode === 'monthly';
+    const rowTime = (x) => (monthly ? fmtDateTime(x.createdAt) : fmtTime(x.createdAt));
     const stat = (label, value, note) => '<div class="flex flex-col gap-1 p-4"><dt class="text-small text-muted">' + label + '</dt><dd class="text-heading">' + value + '</dd>'
       + (note ? '<dd class="text-small text-muted">' + note + '</dd>' : '') + '</div>';
     const margin = m.revenue ? Math.round(m.grossProfit / m.revenue * 100) : 0;
@@ -830,7 +841,8 @@
       + stat('Estimasi laba kotor', rp(m.grossProfit), m.revenue ? 'Margin ' + margin + '%' : 'Omzet dikurangi HPP')
       + stat('Transaksi', String(m.count), 'PPN terkumpul ' + rp(m.tax)) + '</dl>';
     if (!m.count) {
-      html += '<div class="state-empty rounded-xl border border-line bg-surface"><p class="text-heading">Belum ada transaksi pada tanggal ini</p>'
+      html += '<div class="state-empty rounded-xl border border-line bg-surface"><p class="text-heading">'
+        + (monthly ? 'Belum ada transaksi pada bulan ini' : 'Belum ada transaksi pada tanggal ini') + '</p>'
         + '<p class="text-body text-muted">Transaksi dari menu Kasir akan muncul di sini.</p><button type="button" class="btn-primary" data-goto="kasir">Buka kasir</button></div>';
       box.innerHTML = html; return;
     }
@@ -838,7 +850,7 @@
       '<li class="list-row"><span class="grow text-body">' + METHODS[x.method] + '</span><span class="text-small text-muted">' + x.count + ' transaksi</span><span class="w-32 text-right text-body font-medium">' + rp(x.total) + '</span></li>').join('') + '</ul></div>';
     html += '<div><h3 class="section-label">Riwayat transaksi</h3><ul class="list">' + r.sales.map((x) =>
       '<li><button type="button" data-receipt="' + x.id + '" class="list-row w-full text-left hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">'
-      + '<div class="min-w-0 grow"><p class="text-body font-medium">' + esc(x.invoiceNo) + '</p><p class="text-small text-muted">' + fmtTime(x.createdAt) + ' · ' + METHODS[x.paymentMethod] + (x.customerName ? ' · ' + esc(x.customerName) : '') + '</p></div>'
+      + '<div class="min-w-0 grow"><p class="text-body font-medium">' + esc(x.invoiceNo) + '</p><p class="text-small text-muted">' + rowTime(x) + ' · ' + METHODS[x.paymentMethod] + (x.customerName ? ' · ' + esc(x.customerName) : '') + '</p></div>'
       + '<div class="text-right"><p class="text-body font-medium">' + rp(x.total) + '</p><p class="text-small text-muted">Laba ' + rp(x.subtotal - x.discountAmount - x.cogs) + '</p></div></button></li>').join('') + '</ul></div>';
     box.innerHTML = html;
   }
@@ -909,6 +921,13 @@
   $('#stock-search').addEventListener('input', (e) => { S.stockQ = e.target.value; renderStockList(); });
   $('#add-product').addEventListener('click', () => openProduct(null));
   $('#report-date').addEventListener('change', (e) => { if (e.target.value) { S.reportDate = e.target.value; loadReport(); } });
+  $$('#report-mode [data-mode]').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.mode === S.reportMode) return;
+    S.reportMode = b.dataset.mode; renderReportPeriod(); loadReport();
+  }));
+  $('#report-month').addEventListener('change', (e) => {
+    if (/^\d{4}-\d{2}$/.test(e.target.value) && e.target.value !== S.reportMonth) { S.reportMonth = e.target.value; loadReport(); }
+  });
   $('#cart-clear').addEventListener('click', () => { S.cart = []; cartChanged(); renderCart(); renderPos(); });
   $('#pay-btn').addEventListener('click', checkout);
   $('#store-switch-btn').addEventListener('click', openStores);
@@ -1000,6 +1019,8 @@
     if (await loadStores()) await afterStores();
   }
   $('#report-date').value = S.reportDate;
+  $('#report-month').value = S.reportMonth;
+  renderReportPeriod();
   renderCart(); renderProducts(); renderShell();
   (async function boot() {
     if (!(await loadStores())) { setTab('kasir'); renderBrand(); return; }

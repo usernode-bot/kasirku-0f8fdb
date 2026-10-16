@@ -248,8 +248,19 @@
       <div class="flex flex-wrap items-end gap-3">
         <h2 class="text-heading grow">Laporan Penjualan</h2>
         <div>
+          <p class="section-label" id="report-mode-label">Periode</p>
+          <div id="report-mode" role="group" aria-labelledby="report-mode-label" class="flex gap-2">
+            <button type="button" class="seg" data-mode="daily" aria-pressed="true">Harian</button>
+            <button type="button" class="seg" data-mode="monthly" aria-pressed="false">Bulanan</button>
+          </div>
+        </div>
+        <div id="report-date-wrap">
           <label for="report-date" class="section-label block">Tanggal</label>
           <input id="report-date" type="date" class="field">
+        </div>
+        <div id="report-month-wrap" hidden>
+          <label for="report-month" class="section-label block">Bulan</label>
+          <input id="report-month" type="month" class="field">
         </div>
       </div>
       <div id="report-body"></div>
