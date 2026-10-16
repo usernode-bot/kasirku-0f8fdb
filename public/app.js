@@ -70,7 +70,7 @@
   // ── State ──
   const S = {
     tab: 'kasir', stores: [], storesState: 'loading', activeStoreId: readSavedStore(),
-    store: null, products: [], productsState: 'loading', q: '', cat: 'Semua', stockQ: '',
+    store: null, products: [], productsState: 'loading', q: '', cat: 'Semua', stockQ: '', stockLowOnly: false,
     cart: [], discType: 'none', discValue: 0, taxPct: 11, method: 'cash', paid: 0, paying: false,
     checkoutRef: null, payUncertain: false,
     movements: null, movementsState: 'loading', report: null, reportState: 'loading', reportDate: today(),
@@ -516,15 +516,16 @@
       return;
     }
     const q = S.stockQ.trim().toLowerCase();
-    const list = S.products.filter((p) => !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.category.toLowerCase().includes(q));
-    if (!list.length) { box.innerHTML = '<div class="state-empty rounded-xl border border-line bg-surface"><p class="text-heading">Produk tidak ditemukan</p><p class="text-body text-muted">Coba kata kunci lain.</p></div>'; return; }
+    const list = S.products.filter((p) => (!S.stockLowOnly || p.low || p.out)
+      && (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.category.toLowerCase().includes(q)));
+    if (!list.length) { box.innerHTML = '<div class="state-empty rounded-xl border border-line bg-surface"><p class="text-heading">Produk tidak ditemukan</p><p class="text-body text-muted">' + (S.stockLowOnly ? 'Tidak ada produk yang perlu restock.' : 'Coba kata kunci lain.') + '</p></div>'; return; }
     box.innerHTML = '<div class="overflow-x-auto rounded-xl border border-line bg-surface"><table class="w-full min-w-[44rem]">'
       + '<thead class="border-b border-line"><tr><th class="th">Produk</th><th class="th">Kategori</th><th class="th text-right">Harga modal</th><th class="th text-right">Harga jual</th><th class="th text-right">Stok</th><th class="th"><span class="sr-only">Aksi</span></th></tr></thead>'
       + '<tbody class="divide-y divide-line">' + list.map((p) =>
         '<tr><td class="td"><p class="font-medium">' + esc(p.name) + '</p><p class="text-small text-muted">' + esc(p.sku) + '</p></td>'
         + '<td class="td text-muted">' + esc(p.category) + '</td>'
         + '<td class="td text-right">' + rp(p.costPrice) + '</td><td class="td text-right">' + rp(p.sellPrice) + '</td>'
-        + '<td class="td text-right"><p class="font-medium">' + p.stock + '</p>' + stockBadge(p) + '</td>'
+        + '<td class="td text-right"><p class="font-medium">' + p.stock + '</p><p class="text-small text-muted">minimum ' + p.minStock + '</p>' + stockBadge(p) + '</td>'
         + '<td class="td"><div class="flex justify-end gap-2"><button type="button" class="btn-secondary" data-adjust="' + p.id + '" aria-label="Sesuaikan stok ' + esc(p.name) + '">Sesuaikan stok</button>'
         + '<button type="button" class="btn-secondary" data-edit="' + p.id + '" aria-label="Ubah ' + esc(p.name) + '">Ubah</button></div></td></tr>').join('')
       + '</tbody></table></div>';
@@ -789,6 +790,11 @@
   // ── Events ──
   $('#pos-search').addEventListener('input', (e) => { S.q = e.target.value; renderPos(); });
   $('#stock-search').addEventListener('input', (e) => { S.stockQ = e.target.value; renderStockList(); });
+  $('#stock-low-toggle').addEventListener('click', () => {
+    S.stockLowOnly = !S.stockLowOnly;
+    $('#stock-low-toggle').setAttribute('aria-pressed', String(S.stockLowOnly));
+    renderStockList();
+  });
   $('#add-product').addEventListener('click', () => openProduct(null));
   $('#report-date').addEventListener('change', (e) => { if (e.target.value) { S.reportDate = e.target.value; loadReport(); } });
   $('#cart-clear').addEventListener('click', () => { S.cart = []; cartChanged(); renderCart(); renderPos(); });
