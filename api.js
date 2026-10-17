@@ -252,6 +252,13 @@ async function seedDemo(pool) {
     ['DEMO-INV-003', 'debit', 0, [['DEMO-002', 1], ['DEMO-003', 2], ['DEMO-010', 1]], '10 minutes', null],
     ['DEMO-INV-004', 'credit', 0, [['DEMO-001', 1], ['DEMO-009', 5]], '5 minutes', 'Staging demo Pak Budi'],
     ['DEMO-INV-005', 'credit', 0, [['DEMO-003', 2]], '2 minutes', 'Staging demo Bu Sari'],
+    // Spread over the past week so the 7-day insight lists (Daftar belanja,
+    // Paling laku, Mengendap) show something. Stock is not changed, as with
+    // the rows above.
+    ['DEMO-INV-006', 'qris', 0, [['DEMO-008', 6], ['DEMO-004', 4]], '1 day', null],
+    ['DEMO-INV-007', 'cash', 100000, [['DEMO-008', 5], ['DEMO-011', 8], ['DEMO-004', 3]], '2 days', null],
+    ['DEMO-INV-008', 'qris', 0, [['DEMO-011', 10], ['DEMO-009', 20]], '4 days', null],
+    ['DEMO-INV-009', 'debit', 0, [['DEMO-005', 6], ['DEMO-006', 9]], '5 days', null],
   ];
   for (const [inv, method, cash, lines, ago, customer] of demoSales) {
     const { rows } = await pool.query(
@@ -858,6 +865,47 @@ function mountApi({ app, pool, IS_STAGING }) {
       }
       throw e;
     } finally { client.release(); }
+  }));
+
+  // ── 7-day insights ──
+  // Read-only feed for the Stok tab's warning and shopping list and the
+  // Laporan tab's weekly summary. The window is today plus the 6 days before,
+  // on the Asia/Jakarta calendar (no DST, so stepping back 6×24h is exact).
+  // Velocity is units sold in those 7 days; daysLeft is floor(stock × 7 / sold).
+  app.get('/api/insights', h(async (req, res) => {
+    const to = jakartaDate(req.now);
+    const from = jakartaDate(new Date(req.now.getTime() - 6 * 86400000));
+    if (!req.store) {
+      return res.json({ from, to, days: 7, rates: [], shopping: [], best: [], stagnant: [], stagnantCount: 0 });
+    }
+    // Both sides filter on store_id: another owner's store never leaks.
+    const { rows } = await pool.query(
+      `SELECT p.id, p.name, p.sku, p.stock, p.min_stock, p.cost_price, COALESCE(t.sold, 0)::int AS sold
+       FROM products p
+       LEFT JOIN (SELECT i.product_id, SUM(i.qty) AS sold
+                  FROM sale_items i JOIN sales s ON s.id = i.sale_id
+                  WHERE s.store_id = $1 AND i.store_id = $1
+                    AND (s.created_at AT TIME ZONE '${TZ}')::date BETWEEN $2::date AND $3::date
+                  GROUP BY i.product_id) t ON t.product_id = p.id
+       WHERE p.store_id = $1 AND p.active`, [req.store.id, from, to]);
+    const rates = []; const shopping = []; const best = []; const stagnant = [];
+    for (const r of rows) {
+      const sold = Number(r.sold); const stock = r.stock;
+      const daysLeft = sold > 0 ? Math.floor(stock * 7 / sold) : null;
+      if (sold > 0) rates.push({ productId: r.id, sold, daysLeft });
+      // Runs out within the window: it sold more last week than it has now.
+      if (sold > 0 && stock < sold) {
+        shopping.push({ productId: r.id, name: r.name, sku: r.sku, stock, minStock: r.min_stock,
+          sold, daysLeft, suggest: Math.max(sold, r.min_stock) - stock });
+      }
+      if (sold > 0) best.push({ productId: r.id, name: r.name, stock, sold });
+      if (stock > 0 && sold === 0) stagnant.push({ productId: r.id, name: r.name, stock, stockValue: stock * r.cost_price });
+    }
+    shopping.sort((a, b) => a.daysLeft - b.daysLeft || b.sold - a.sold || a.name.localeCompare(b.name));
+    best.sort((a, b) => b.sold - a.sold || a.name.localeCompare(b.name));
+    stagnant.sort((a, b) => b.stockValue - a.stockValue || a.name.localeCompare(b.name));
+    res.json({ from, to, days: 7, rates, shopping, best: best.slice(0, 5),
+      stagnant: stagnant.slice(0, 5), stagnantCount: stagnant.length });
   }));
 
   // Daily or monthly report. Omzet = sales after discount, before PPN; PPN is

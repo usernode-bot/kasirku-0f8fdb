@@ -143,3 +143,4 @@ Re-theme by changing the token values there, keeping every text pair at
 - `sales` and `sale_items` are `staging:private` (financial records); staging seeds fake `DEMO-` products and sales.
 - Reports use the Asia/Jakarta day.
 - Payment methods: `cash`, `qris`, `debit`, `transfer` (any bank) and `bri` ("Transfer BRI"). The BRI account shown at checkout is per store (`stores.bri_account_no` digits only, `stores.bri_account_name`), edited in Profil toko; both are set or both empty, and checkout shows a prompt to fill them in when they are empty.
+- The 7-day insights (GET `/api/insights`) look at today plus the 6 days before on the Asia/Jakarta calendar: days left = floor(stock × 7 / sold); an item lands on the Daftar belanja when it sold more last week than it has in stock, with suggested buy = max(sold, min_stock) − stock; "mengendap" means stock > 0 with no sales in those 7 days, ranked by stock × harga modal.

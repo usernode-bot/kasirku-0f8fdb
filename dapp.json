@@ -66,6 +66,12 @@
         "api.js",
         "styles/**"
       ]
+    },
+    {
+      "id": "insights.empty",
+      "name": "Insights answer honestly for a visitor without a store",
+      "path": "/api/insights",
+      "expectText": "\"shopping\":[]"
     }
   ]
 }
