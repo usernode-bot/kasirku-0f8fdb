@@ -35,6 +35,16 @@
       ]
     },
     {
+      "id": "store.sample",
+      "name": "The first-store screen offers example data",
+      "path": "/",
+      "expectText": "Coba dengan data contoh",
+      "impact": [
+        "public/**",
+        "api.js"
+      ]
+    },
+    {
       "id": "stok.inventory",
       "name": "Stock tab without a store shows the first-store screen",
       "path": "/#stok",

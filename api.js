@@ -298,6 +298,95 @@ async function seedDemo(pool) {
      ON CONFLICT (store_id, client_ref) WHERE client_ref IS NOT NULL DO NOTHING`, [DEMO_STORE_1]);
 }
 
+// Example sales for the "Coba dengan data contoh" button: one entry is
+// [dayOffset, timeOrMinutesAgo, method, discountPercent, [[sku, qty], ...]].
+// Past days carry a fixed Jakarta 'HH:MM'; today carries how many minutes ago
+// (so today's sales never land in yesterday just after midnight). Oldest
+// first, so the inserted ids rise with time and reports list them newest
+// first. Sales per product stay small: after the week the stock of each
+// product equals its DEMO_PRODUCTS value (DEMO-004/008 below minimum,
+// DEMO-013 at 0).
+const SAMPLE_SALES = [
+  [6, '09:40', 'cash', 0, [['DEMO-001', 1], ['DEMO-009', 2]]],
+  [5, '15:20', 'qris', 0, [['DEMO-005', 2], ['DEMO-007', 3]]],
+  [4, '10:10', 'debit', 0, [['DEMO-002', 1], ['DEMO-003', 2]]],
+  [3, '09:40', 'transfer', 0, [['DEMO-012', 2], ['DEMO-014', 1]]],
+  [3, '16:05', 'cash', 0, [['DEMO-009', 3], ['DEMO-011', 1]]],
+  [2, '11:30', 'qris', 0, [['DEMO-006', 4], ['DEMO-008', 2]]],
+  [2, '17:45', 'debit', 10, [['DEMO-010', 2], ['DEMO-011', 2]]],
+  [1, '09:15', 'cash', 0, [['DEMO-003', 1], ['DEMO-005', 3]]],
+  [1, '14:50', 'qris', 0, [['DEMO-012', 1], ['DEMO-013', 1]]],
+  [0, 25, 'cash', 0, [['DEMO-001', 2], ['DEMO-007', 2]]],
+  [0, 12, 'debit', 0, [['DEMO-009', 4], ['DEMO-006', 1]]],
+  [0, 3, 'qris', 0, [['DEMO-005', 1], ['DEMO-014', 1]]],
+];
+
+// Fills one store (just inserted) with the DEMO_PRODUCTS catalog and a week
+// of example sales, inside the caller's transaction. Stock movements are
+// written the same way /api/products and /api/sales write them: one 'Stok
+// awal' restock per product, one 'sale' movement per line with the running
+// stock_after, so Stok's history and the reports stay consistent.
+async function seedSampleStore(client, storeId, cashier, now) {
+  const soldBySku = {};
+  for (const s of SAMPLE_SALES) for (const [sku, qty] of s[4]) soldBySku[sku] = (soldBySku[sku] || 0) + qty;
+  const bySku = {};
+  for (const [sku, name, category, cost, sell, stock, min] of DEMO_PRODUCTS) {
+    const initial = stock + (soldBySku[sku] || 0);
+    const { rows } = await client.query(
+      `INSERT INTO products (store_id, sku, name, category, cost_price, sell_price, stock, min_stock)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [storeId, sku, name, category, cost, sell, initial, min]);
+    bySku[sku] = { id: rows[0].id, name, sku, cost, sell, running: initial };
+    if (initial > 0) {
+      await client.query(
+        `INSERT INTO stock_movements (store_id, product_id, type, qty_change, stock_after, note, actor, created_at)
+         VALUES ($1,$2,'restock',$3,$3,'Stok awal',$4,
+           (((($5::timestamptz AT TIME ZONE 'Asia/Jakarta')::date - 7) + time '08:00') AT TIME ZONE 'Asia/Jakarta'))`,
+        [storeId, rows[0].id, initial, cashier, now]);
+    }
+  }
+  for (const [day, at, method, discPct, lines] of SAMPLE_SALES) {
+    const tsExpr = day > 0
+      ? `((($1::timestamptz AT TIME ZONE 'Asia/Jakarta')::date - $2::int) + $3::time) AT TIME ZONE 'Asia/Jakarta'`
+      : `GREATEST($1::timestamptz - ($2::int || ' minutes')::interval,
+           (($1::timestamptz AT TIME ZONE 'Asia/Jakarta')::date)::timestamp AT TIME ZONE 'Asia/Jakarta')`;
+    const stamp = await client.query(
+      `SELECT nextval('invoice_seq') AS n, (${tsExpr}) AS ts,
+         to_char((${tsExpr}) AT TIME ZONE 'Asia/Jakarta', 'YYYYMMDD') AS day`,
+      day > 0 ? [now, day, String(at)] : [now, at]);
+    const { n, ts, day: ymd } = stamp.rows[0];
+    const invoice = `DEMO-INV-${ymd}-${String(n).padStart(4, '0')}`;
+    let subtotal = 0; let cogs = 0;
+    for (const [sku, qty] of lines) {
+      const p = bySku[sku];
+      subtotal += p.sell * qty; cogs += p.cost * qty;
+    }
+    const discount = discPct ? Math.round(subtotal * discPct / 100) : 0;
+    const tax = Math.round((subtotal - discount) * 11 / 100);
+    const total = subtotal - discount + tax;
+    const paid = method === 'cash' ? Math.ceil(total / 10000) * 10000 : total;
+    const sale = (await client.query(
+      `INSERT INTO sales (store_id, invoice_no, created_at, cashier, subtotal, discount_type, discount_value,
+         discount_amount, tax_percent, tax_amount, total, cogs, payment_method, paid, change_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,11,$9,$10,$11,$12,$13,$14) RETURNING id`,
+      [storeId, invoice, ts, cashier, subtotal, discPct ? 'percent' : 'none', discPct || 0, discount, tax,
+        total, cogs, method, paid, paid - total])).rows[0];
+    for (const [sku, qty] of lines) {
+      const p = bySku[sku];
+      p.running -= qty;
+      await client.query(
+        `INSERT INTO sale_items (store_id, sale_id, product_id, name, sku, qty, list_price, price, cost_price)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$7,$8)`,
+        [storeId, sale.id, p.id, p.name, p.sku, qty, p.sell, p.cost]);
+      await client.query('UPDATE products SET stock = $1 WHERE id = $2', [p.running, p.id]);
+      await client.query(
+        `INSERT INTO stock_movements (store_id, product_id, type, qty_change, stock_after, note, ref, actor, created_at)
+         VALUES ($1,$2,'sale',$3,$4,'',$5,$6,$7)`,
+        [storeId, p.id, -qty, p.running, invoice, cashier, ts]);
+    }
+  }
+}
+
 function mountApi({ app, pool, IS_STAGING }) {
   const jakartaDate = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d);
 
@@ -393,6 +482,31 @@ function mountApi({ app, pool, IS_STAGING }) {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
       [owner, s.name, s.address, s.phone, s.logoUrl, s.tax, s.briNo, s.briName]);
     res.status(201).json(storeRow(rows[0]));
+  }));
+
+  // Example store for a brand-new owner: a real store of their own, filled
+  // with sample products and a week of sales so they can try Kasir, Stok and
+  // Laporan without naming a store first. One per owner, guarded against a
+  // double tap with a transaction-scoped advisory lock.
+  app.post('/api/stores/sample', h(async (req, res) => {
+    const owner = req.user && req.user.id != null ? req.user.id : null;
+    if (owner == null) throw new HttpError(401, 'account_required');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(4242, $1)', [owner]);
+      const exists = await client.query('SELECT 1 FROM stores WHERE owner_id = $1', [owner]);
+      if (exists.rows.length) throw new HttpError(409, 'Data contoh hanya untuk akun yang belum punya toko');
+      const { rows } = await client.query(
+        `INSERT INTO stores (owner_id, name, address, phone, logo_url, tax_percent)
+         VALUES ($1, 'Toko Contoh', '', '', '', 11) RETURNING *`, [owner]);
+      await seedSampleStore(client, rows[0].id, actor(req), req.now);
+      await client.query('COMMIT');
+      res.status(201).json(storeRow(rows[0]));
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally { client.release(); }
   }));
 
   // ── Store profile (the active store) ──
