@@ -190,9 +190,10 @@
     $('#store-gate').hidden = !empty;
     $('#main-area').hidden = empty;
     // Locked tabs explain themselves: a small lock after the name plus the
-    // same words as each tab's tooltip. The lock waits for the store list to
-    // answer, so it never claims "no store" while the list is still loading
-    // or failed to load.
+    // same words as each tab's tooltip, and one muted hint line under the tab
+    // bar saying what unlocks them (screen readers hear it as the tab bar's
+    // description). All three wait for the store list to answer, so none
+    // claims "no store" while the list is still loading or failed to load.
     const lock = empty && S.storesState === 'ok';
     $$('#main-tabs [role=tab]').forEach((b) => {
       b.disabled = empty;
@@ -202,6 +203,9 @@
       if (lock && !icon) b.insertAdjacentHTML('beforeend', TAB_LOCK_SVG);
       if (!lock && icon) icon.remove();
     });
+    $('#tabs-lock-hint').hidden = !lock;
+    if (lock) { $('#main-tabs').setAttribute('aria-describedby', 'tabs-lock-hint'); }
+    else { $('#main-tabs').removeAttribute('aria-describedby'); }
     renderGate();
     renderBrand();
     renderOnboarding();
