@@ -137,7 +137,8 @@
       <p class="text-body text-muted">Cukup 1 menit: isi nama toko, lalu mulai mencatat penjualan, stok dan laporan.</p>
       <form id="form-gate-store" class="flex w-full flex-col gap-2 text-left" novalidate>
         <label for="g-name" class="section-label block mb-0">Nama toko</label>
-        <input id="g-name" class="field" maxlength="80" placeholder="e.g. Toko Maju Jaya" autocomplete="organization">
+        <input id="g-name" class="field" maxlength="80" placeholder="e.g. Toko Maju Jaya" autocomplete="organization" aria-describedby="g-name-hint">
+        <p id="g-name-hint" class="text-small text-muted">Nama toko bisa diubah kapan saja di Profil toko.</p>
         <p data-err role="alert" class="text-small text-danger"></p>
         <button type="submit" class="btn-primary w-full">Buat toko</button>
       </form>
@@ -387,7 +388,7 @@
   <form id="form-new-store" class="flex flex-col gap-3 p-5" novalidate>
     <h2 class="text-heading">Tambah toko</h2>
     <p class="text-small text-muted">Data toko ini disimpan untuk akun Anda.</p>
-    <div><label for="n-name" class="section-label block">Nama toko</label><input id="n-name" class="field" maxlength="80" placeholder="e.g. Toko Maju Jaya"></div>
+    <div><label for="n-name" class="section-label block">Nama toko</label><input id="n-name" class="field" maxlength="80" placeholder="e.g. Toko Maju Jaya" aria-describedby="n-name-hint"><p id="n-name-hint" class="mt-1 px-1 text-small text-muted">Nama toko bisa diubah kapan saja di Profil toko.</p></div>
     <div><label for="n-address" class="section-label block">Alamat</label><input id="n-address" class="field" maxlength="200" placeholder="e.g. Jl. Melati No. 5, Bandung"></div>
     <div class="grid gap-3 sm:grid-cols-2">
       <div><label for="n-phone" class="section-label block">Nomor telepon</label><input id="n-phone" class="field" maxlength="40" inputmode="tel" placeholder="e.g. 0812-3456-7890"></div>

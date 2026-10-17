@@ -84,11 +84,13 @@
   }
 
   /* Text inputs, selects and textareas: <input class="field">, 44 px tall.
-     The placeholder is a faint hint (muted at 60%), so an example such as
-     "5.0" never reads as a value somebody already typed in. */
+     The placeholder uses the muted token at full strength so the example
+     ("e.g. Toko Maju Jaya") is readable at 4.5:1 in both looks. It is still
+     lighter than typed text (text-fg) and starts with "e.g.", so it never
+     reads as a value somebody already typed in. */
   .field {
     @apply block min-h-11 w-full rounded-lg border border-line bg-surface px-3 py-2 text-body text-fg
-      placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-focus;
+      placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-focus;
   }
 
   /* A grouped list: <ul class="list"> of <li class="list-row">. The usual
