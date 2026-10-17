@@ -76,6 +76,7 @@
     checkoutRef: null, payUncertain: false,
     movements: null, movementsState: 'loading', report: null, reportState: 'loading', reportDate: today(),
     debts: null, debtsState: 'loading', debtRef: null, debtCustomerId: null,
+    insights: null, insightsState: 'loading',
     reportMode: 'daily', reportMonth: today().slice(0, 7),
     receipt: null,
   };
@@ -142,6 +143,7 @@
     } catch (e) { S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', taxPercent: 11, briAccountNo: '', briAccountName: '' }; renderBrand(); renderOnboarding(); }
   }
   async function loadProducts() {
+    loadInsights();
     if (!hasStore()) { S.products = []; S.productsState = 'ok'; renderProducts(); return; }
     S.productsState = 'loading'; renderProducts();
     try {
@@ -182,6 +184,15 @@
     S.debtsState = 'loading'; renderDebts();
     try { S.debts = await api('/api/debts'); S.debtsState = 'ok'; } catch (e) { S.debtsState = 'error'; }
     renderDebts();
+  }
+  // The 7-day insight figures behind the Stok tab's warning and shopping list
+  // and the Laporan tab's weekly summary. Like the Piutang list, they do not
+  // follow the report date picker: the window is always the last 7 days.
+  async function loadInsights() {
+    if (!hasStore()) { S.insights = null; S.insightsState = 'ok'; renderStockList(); renderWeekly(); return; }
+    S.insightsState = 'loading'; renderStockList(); renderWeekly();
+    try { S.insights = await api('/api/insights'); S.insightsState = 'ok'; } catch (e) { S.insightsState = 'error'; }
+    renderStockList(); renderWeekly();
   }
 
   // ── Shell: the no-store gate vs the tabs ──
@@ -351,7 +362,7 @@
     S.cart = []; S.paid = 0; S.cat = 'Semua'; S.q = ''; $('#cash-paid').value = ''; $('#pos-search').value = '';
     // A customer on a not-yet-recorded credit sale belongs to the old store too.
     S.customerName = ''; $('#credit-name').value = '';
-    S.debts = null;
+    S.debts = null; S.insights = null;
     cartChanged();
     renderShell(); $('#dlg-stores').close();
     toast('Toko aktif: ' + ((S.stores.find((s) => s.id === id) || {}).name || ''));
@@ -608,14 +619,29 @@
     return '<span class="badge text-muted">Aman</span>';
   }
   function renderStockList() {
+    renderShopping();
     const box = $('#stock-list');
     const alertBox = $('#low-alert');
     if (S.productsState === 'loading') { box.innerHTML = skeletonRows(5); alertBox.innerHTML = ''; return; }
     if (S.productsState === 'error') { box.innerHTML = errorBox('Daftar produk', 'products'); alertBox.innerHTML = ''; return; }
-    const low = S.products.filter((p) => p.low || p.out);
+    // The 7-day selling rate, only when the insights have loaded: while they
+    // load or failed, the strip shows exactly today's minimum-based text.
+    const rate = (p) => (S.insightsState === 'ok' && S.insights
+      ? S.insights.rates.find((r) => r.productId === p.id) : null);
+    const low = S.products.filter((p) => {
+      const r = rate(p);
+      return p.low || p.out || (r && p.stock < r.sold);
+    });
     alertBox.innerHTML = low.length
       ? '<div class="rounded-xl border border-line bg-surface p-4" role="status"><p class="text-body font-medium text-danger">' + low.length + ' produk perlu restock</p>'
-        + '<p class="text-small text-muted">' + low.map((p) => esc(p.name) + ' (sisa ' + p.stock + ', minimum ' + p.minStock + ')').join(', ') + '</p></div>'
+        + '<p class="text-small text-muted">' + low.map((p) => {
+          const r = rate(p);
+          if (r && p.stock > 0) {
+            const left = r.daysLeft === 0 ? 'habis hari ini' : 'habis ± ' + r.daysLeft + ' hari lagi';
+            return esc(p.name) + ' (sisa ' + p.stock + ', ' + left + ')';
+          }
+          return esc(p.name) + ' (sisa ' + p.stock + ', minimum ' + p.minStock + ')';
+        }).join(', ') + '</p></div>'
       : '';
     if (!S.products.length) {
       box.innerHTML = '<div class="state-empty rounded-xl border border-line bg-surface"><p class="text-heading">Belum ada produk di gudang</p><p class="text-body text-muted">Tambahkan produk pertama Anda dengan harga modal, harga jual dan stok awal.</p>'
@@ -636,6 +662,66 @@
         + '<button type="button" class="btn-secondary" data-edit="' + p.id + '" aria-label="Ubah ' + esc(p.name) + '">Ubah</button></div></td></tr>').join('')
       + '</tbody></table></div>';
   }
+
+  // ── Daftar belanja & Ringkasan 7 hari (from /api/insights) ──
+  const fmtDay = (ymd) => new Date(ymd + 'T00:00:00+07:00')
+    .toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short' });
+  const insightRange = (ins) => fmtDay(ins.from) + ' – ' + fmtDay(ins.to) + ' ' + ins.to.slice(0, 4);
+
+  function renderShopping() {
+    const box = $('#shopping-list');
+    if (S.productsState !== 'ok' || !S.products.length) { box.innerHTML = ''; return; }
+    if (S.insightsState === 'loading') { box.innerHTML = skeletonRows(2); return; }
+    if (S.insightsState === 'error') { box.innerHTML = errorBox('Daftar belanja', 'insights'); return; }
+    const ins = S.insights;
+    if (!ins || !ins.shopping.length) {
+      box.innerHTML = '<div class="state-empty rounded-xl border border-line bg-surface"><p class="text-heading">Belum ada yang perlu dibeli</p>'
+        + '<p class="text-body text-muted">Daftar ini disusun dari penjualan 7 hari terakhir: barang yang akan habis dalam 7 hari muncul di sini.</p></div>';
+      return;
+    }
+    box.innerHTML = '<div><h3 class="section-label flex justify-between"><span>Daftar belanja</span><span>Dari penjualan ' + insightRange(ins) + '</span></h3><ul class="list">'
+      + ins.shopping.map((x) =>
+        '<li class="list-row flex-wrap"><div class="min-w-0 grow"><p class="text-body font-medium">' + esc(x.name) + '</p>'
+        + '<p class="text-small text-muted">Terjual ' + x.sold + ' dalam 7 hari · sisa ' + x.stock + ' · '
+        + (x.stock === 0 ? 'habis' : x.daysLeft === 0 ? 'habis hari ini' : 'habis ± ' + x.daysLeft + ' hari lagi') + '</p></div>'
+        + '<p class="shrink-0 text-body font-medium">Beli ' + x.suggest + '</p>'
+        + '<button type="button" class="btn-secondary w-full shrink-0 sm:w-auto" data-restock="' + x.productId
+        + '" data-qty="' + x.suggest + '" aria-label="Catat barang masuk ' + esc(x.name) + '">Catat barang masuk</button></li>').join('')
+      + '</ul></div>';
+  }
+
+  function renderWeekly() {
+    const box = $('#weekly-body');
+    if (S.insightsState === 'loading') { box.innerHTML = skeletonRows(3); return; }
+    if (S.insightsState === 'error') { box.innerHTML = errorBox('Ringkasan 7 hari', 'insights'); return; }
+    if (!hasStore() || !S.insights) { box.innerHTML = ''; return; }
+    const ins = S.insights;
+    if (!ins.best.length) {
+      box.innerHTML = '<div class="state-empty rounded-xl border border-line bg-surface"><p class="text-heading">Belum ada penjualan dalam 7 hari terakhir</p>'
+        + '<p class="text-body text-muted">Barang paling laku dan yang mengendap akan muncul di sini.</p></div>';
+      return;
+    }
+    const best = ins.best.map((x) =>
+      '<li class="list-row"><div class="min-w-0 grow"><p class="text-body font-medium">' + esc(x.name) + '</p>'
+      + '<p class="text-small text-muted">sisa ' + x.stock + '</p></div>'
+      + '<p class="shrink-0 text-body font-medium">Terjual ' + x.sold + '</p></li>').join('');
+    let stag = ins.stagnant.map((x) =>
+      '<li class="list-row"><div class="min-w-0 grow"><p class="text-body font-medium">' + esc(x.name) + '</p>'
+      + '<p class="text-small text-muted">stok ' + x.stock + '</p></div>'
+      + '<div class="text-right"><p class="text-body font-medium">' + rp(x.stockValue) + '</p>'
+      + '<p class="text-small text-muted">modal tertahan</p></div></li>').join('');
+    if (ins.stagnantCount > 5) {
+      stag += '<li class="list-row text-small text-muted">dan ' + (ins.stagnantCount - 5) + ' produk lain</li>';
+    } else if (!ins.stagnant.length) {
+      stag += '<li class="list-row text-small text-muted">Semua barang yang ada stoknya terjual dalam 7 hari ini.</li>';
+    }
+    box.innerHTML = '<div><h3 class="section-label flex justify-between"><span>Ringkasan 7 hari terakhir</span><span>' + insightRange(ins) + '</span></h3>'
+      + '<div class="grid gap-5 lg:grid-cols-2">'
+      + '<div><h4 class="section-label">Paling laku</h4><ul class="list">' + best + '</ul></div>'
+      + '<div><h4 class="section-label">Mengendap (tidak terjual 7 hari)</h4><ul class="list">' + stag + '</ul></div>'
+      + '</div></div>';
+  }
+
   function renderMovements() {
     const box = $('#movement-list');
     if (S.movementsState === 'loading') { box.innerHTML = skeletonRows(3); return; }
@@ -696,11 +782,12 @@
     const after = type === 'restock' ? p.stock + q : type === 'return' ? p.stock - q : q;
     $('#a-preview').textContent = 'Stok saat ini ' + p.stock + ', menjadi ' + after + '.';
   }
-  function openAdjust(id) {
+  function openAdjust(id, qty) {
     const p = S.products.find((x) => x.id === id); if (!p) return;
     adjustId = id;
     $('#a-product').textContent = p.name + ' (' + p.sku + ')';
-    $('#a-type').value = 'restock'; $('#a-qty').value = ''; $('#a-note').value = '';
+    // qty is the shopping list's suggested amount, prefilled into Barang masuk.
+    $('#a-type').value = 'restock'; $('#a-qty').value = qty ? String(qty) : ''; $('#a-note').value = '';
     adjustPreview(); openDlg($('#dlg-adjust'));
   }
   $('#a-type').addEventListener('change', adjustPreview);
@@ -953,7 +1040,7 @@
     $$('[role=tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
     ['kasir', 'stok', 'laporan'].forEach((t) => { $('#tab-' + t).hidden = t !== tab; });
     if (tab === 'stok' && S.movementsState !== 'ok') loadMovements();
-    if (tab === 'laporan') { loadReport(); loadDebts(); }
+    if (tab === 'laporan') { loadReport(); loadDebts(); loadInsights(); }
   }
   const goto = (t) => { location.hash = t; };
   window.addEventListener('hashchange', () => setTab(location.hash.slice(1)));
@@ -1040,6 +1127,7 @@
     else if (d.method) { if (d.method !== S.method) cartChanged(); S.method = d.method; updateTotals(); }
     else if (d.quick) { S.paid = Number(d.quick); $('#cash-paid').value = String(S.paid); cartChanged(); updateTotals(); }
     else if (d.adjust) openAdjust(Number(d.adjust));
+    else if (d.restock) openAdjust(Number(d.restock), Number(d.qty));
     else if (d.edit) openProduct(Number(d.edit));
     else if (t.hasAttribute('data-new-store')) openNewStore();
     else if (t.hasAttribute('data-new-product')) openProduct(null);
@@ -1048,7 +1136,7 @@
     else if (d.goto) goto(d.goto);
     else if (t.hasAttribute('data-bri-copy')) copyBriNo();
     else if (t.hasAttribute('data-bri-setup')) { openStoreProfile(); $('#s-bri-no').focus(); }
-    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: retryStores, debts: loadDebts })[d.retry]();
+    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: retryStores, debts: loadDebts, insights: loadInsights })[d.retry]();
   });
 
   // ── Boot ──
