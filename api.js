@@ -4,7 +4,10 @@
 // as whole rupiah (integers). The server always recomputes totals, stock and
 // cost of goods from its own data.
 const TZ = 'Asia/Jakarta';
-const PAYMENT_METHODS = ['cash', 'qris', 'debit', 'transfer'];
+// `debt` (Utang): the customer takes the goods now and pays later; nothing is
+// received at checkout. A debt is settled later with one of the others.
+const PAYMENT_METHODS = ['cash', 'qris', 'debit', 'transfer', 'debt'];
+const SETTLE_METHODS = ['cash', 'qris', 'debit', 'transfer'];
 const MOVEMENT_TYPES = ['restock', 'return', 'opname'];
 
 class HttpError extends Error {
@@ -119,6 +122,15 @@ ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(i
 -- the same reference returns the sale already recorded instead of a second one.
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS client_ref TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS sales_store_client_ref ON sales (store_id, client_ref) WHERE client_ref IS NOT NULL;
+-- Utang (debt) sales name the customer; the WhatsApp number is optional and
+-- pre-fills the receipt's "Kirim lewat WhatsApp". A debt is settled later.
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS customer_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS customer_phone TEXT NOT NULL DEFAULT '';
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS debt_paid_at TIMESTAMPTZ;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS debt_paid_method TEXT;
+-- A sale rung up on a device while offline and sent on reconnect: created_at
+-- is when it happened on the device, not when it arrived.
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS recorded_offline BOOLEAN NOT NULL DEFAULT FALSE;
 `;
 
 // One-time legacy migration: the old single-shop `store_profile` row (id = 1)
@@ -208,8 +220,14 @@ async function seedDemo(pool) {
     ['DEMO-INV-001', 'cash', 100000, [['DEMO-001', 1], ['DEMO-005', 2]], '30 minutes'],
     ['DEMO-INV-002', 'qris', 0, [['DEMO-006', 3], ['DEMO-009', 5]], '20 minutes'],
     ['DEMO-INV-003', 'debit', 0, [['DEMO-002', 1], ['DEMO-003', 2], ['DEMO-010', 1]], '10 minutes'],
+    ['DEMO-INV-004', 'debt', 0, [['DEMO-003', 1], ['DEMO-009', 4]], '8 minutes',
+      { customer: 'Staging demo Pak Contoh', phone: '081200000000' }],
+    ['DEMO-INV-005', 'debt', 0, [['DEMO-005', 1]], '6 minutes',
+      { customer: 'Staging demo Bu Contoh', paidMethod: 'cash' }],
+    ['DEMO-INV-006', 'cash', 50000, [['DEMO-007', 2], ['DEMO-012', 1]], '4 minutes',
+      { offlineRef: 'DEMO-OFFLINE-0001' }],
   ];
-  for (const [inv, method, cash, lines, ago] of demoSales) {
+  for (const [inv, method, cash, lines, ago, extra = {}] of demoSales) {
     const { rows } = await pool.query(
       `SELECT sku, name, sell_price, cost_price, id FROM products WHERE store_id = $1 AND sku = ANY($2)`,
       [DEMO_STORE_1, lines.map((l) => l[0])]);
@@ -219,13 +237,17 @@ async function seedDemo(pool) {
     for (const [sku, qty] of lines) { subtotal += by[sku].sell_price * qty; cogs += by[sku].cost_price * qty; }
     const tax = Math.round(subtotal * 0.11);
     const total = subtotal + tax;
+    const paid = method === 'cash' ? Math.max(cash, total) : method === 'debt' ? 0 : total;
     const ins = await pool.query(
       `INSERT INTO sales (store_id, invoice_no, created_at, cashier, subtotal, tax_percent, tax_amount, total, cogs,
-         payment_method, paid, change_amount)
-       VALUES ($1, $2, NOW() - $3::interval, 'staging-demo-kasir', $4, 11, $5, $6, $7, $8, $9, $10)
+         payment_method, paid, change_amount, customer_name, customer_phone, debt_paid_at, debt_paid_method,
+         recorded_offline, client_ref)
+       VALUES ($1, $2, NOW() - $3::interval, 'staging-demo-kasir', $4, 11, $5, $6, $7, $8, $9, $10, $11, $12,
+         CASE WHEN $13::text IS NULL THEN NULL ELSE NOW() - interval '2 minutes' END, $13, $14, $15)
        ON CONFLICT (invoice_no) DO NOTHING RETURNING id`,
-      [DEMO_STORE_1, inv, ago, subtotal, tax, total, cogs, method, method === 'cash' ? Math.max(cash, total) : total,
-        method === 'cash' ? Math.max(cash, total) - total : 0]);
+      [DEMO_STORE_1, inv, ago, subtotal, tax, total, cogs, method, paid,
+        method === 'cash' ? paid - total : 0, extra.customer || '', extra.phone || '',
+        extra.paidMethod || null, !!extra.offlineRef, extra.offlineRef || null]);
     if (!ins.rows.length) continue;
     for (const [sku, qty] of lines) {
       const p = by[sku];
@@ -262,6 +284,9 @@ function mountApi({ app, pool, IS_STAGING }) {
     discountType: r.discount_type, discountValue: Number(r.discount_value), discountAmount: r.discount_amount,
     taxPercent: Number(r.tax_percent), taxAmount: r.tax_amount, total: r.total, cogs: r.cogs,
     paymentMethod: r.payment_method, paid: r.paid, change: r.change_amount,
+    customerName: r.customer_name || '', customerPhone: r.customer_phone || '',
+    debtPaidAt: r.debt_paid_at || null, debtPaidMethod: r.debt_paid_method || null,
+    recordedOffline: !!r.recorded_offline, clientRef: r.recorded_offline ? r.client_ref : null,
   });
 
   // ── Active store ──
@@ -299,10 +324,13 @@ function mountApi({ app, pool, IS_STAGING }) {
   // ── Stores ──
   app.get('/api/stores', h(async (req, res) => {
     const owner = req.user && req.user.id != null ? req.user.id : null;
-    if (owner == null) return res.json({ stores: [], activeId: null });
+    if (owner == null) return res.json({ stores: [], activeId: null, me: null });
     const { rows } = await pool.query('SELECT * FROM stores WHERE owner_id = $1 ORDER BY id', [owner]);
     const active = req.store;
-    res.json({ stores: rows.map(storeRow), activeId: active ? active.id : null });
+    // `me` lets the page remember who it is for an offline load, which carries
+    // no token: its cached catalog and unsent sales are kept per account.
+    res.json({ stores: rows.map(storeRow), activeId: active ? active.id : null,
+      me: { id: req.user.id, username: req.user.username || '' } });
   }));
 
   function readStore(b) {
@@ -482,6 +510,25 @@ function mountApi({ app, pool, IS_STAGING }) {
       if (typeof b.clientRef !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(b.clientRef)) throw bad('Referensi transaksi tidak valid');
       clientRef = b.clientRef;
     }
+    // Utang needs a customer name. The WhatsApp number is optional for any method.
+    const customerName = text(b.customerName, 'Nama pelanggan', { max: 80, required: method === 'debt' });
+    const customerPhone = text(b.customerPhone, 'Nomor WhatsApp pelanggan', { max: 20 });
+    if (!/^[0-9 +-]*$/.test(customerPhone)) throw bad('Nomor WhatsApp pelanggan tidak valid');
+    // A sale rung up on a device while offline, sent on reconnect. Its money
+    // was already taken, so it is recorded even if stock ran out meanwhile or
+    // a product was removed since; it keeps the time it happened, and it must
+    // land in exactly the store it was rung up in.
+    const offline = b.offline === true;
+    let occurredAt = null;
+    if (offline) {
+      if (!clientRef) throw bad('Referensi transaksi wajib untuk transaksi offline');
+      const t = typeof b.occurredAt === 'string' ? new Date(b.occurredAt) : null;
+      const nowMs = req.now.getTime();
+      if (!t || Number.isNaN(t.getTime()) || t.getTime() > nowMs + 5 * 60 * 1000
+        || t.getTime() < nowMs - 90 * 24 * 60 * 60 * 1000) throw bad('Waktu transaksi tidak valid');
+      occurredAt = t;
+      if (requestedStoreId(req) !== storeId) throw new HttpError(409, 'Toko transaksi ini tidak ditemukan');
+    }
     const findByRef = async (db) => (await db.query(
       'SELECT * FROM sales WHERE store_id = $1 AND client_ref = $2', [storeId, clientRef])).rows[0];
 
@@ -489,7 +536,7 @@ function mountApi({ app, pool, IS_STAGING }) {
     try {
       await client.query('BEGIN');
       const { rows } = await client.query(
-        'SELECT * FROM products WHERE id = ANY($1) AND active AND store_id = $2 ORDER BY id FOR UPDATE',
+        `SELECT * FROM products WHERE id = ANY($1) AND ${offline ? '' : 'active AND '}store_id = $2 ORDER BY id FOR UPDATE`,
         [wanted.map((w) => w.id), storeId]);
       // Looked up after the product locks: a concurrent attempt with the same
       // reference has committed by now, so a repeated tap finds its sale.
@@ -505,7 +552,7 @@ function mountApi({ app, pool, IS_STAGING }) {
       for (const w of wanted) {
         const p = by[w.id];
         if (!p) throw new HttpError(404, 'Ada produk yang sudah dihapus dari katalog');
-        if (p.stock < w.qty) throw new HttpError(409, `Stok ${p.name} tidak cukup (sisa ${p.stock})`);
+        if (!offline && p.stock < w.qty) throw new HttpError(409, `Stok ${p.name} tidak cukup (sisa ${p.stock})`);
         subtotal += w.qty * w.price;
         cogs += w.qty * p.cost_price;
       }
@@ -513,19 +560,21 @@ function mountApi({ app, pool, IS_STAGING }) {
       const tax = Math.round((subtotal - discount) * taxPct / 100);
       const total = subtotal - discount + tax;
       if (total > 2000000000) throw bad('Total transaksi terlalu besar');
-      let paid = total;
+      let paid = method === 'debt' ? 0 : total;
       if (method === 'cash') {
         paid = int(b.paid, 'Uang diterima', { max: 2000000000 });
         if (paid < total) throw bad('Uang diterima kurang dari total');
       }
       const seq = (await client.query("SELECT nextval('invoice_seq') AS n")).rows[0].n;
-      const invoice = `INV-${jakartaDate(req.now).replace(/-/g, '')}-${String(seq).padStart(4, '0')}`;
+      const invoice = `INV-${jakartaDate(occurredAt || req.now).replace(/-/g, '')}-${String(seq).padStart(4, '0')}`;
       const sale = (await client.query(
         `INSERT INTO sales (store_id, invoice_no, cashier, subtotal, discount_type, discount_value, discount_amount,
-           tax_percent, tax_amount, total, cogs, payment_method, paid, change_amount, client_ref)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-        [storeId, invoice, actor(req), subtotal, dType, dValue, discount, taxPct, tax, total, cogs, method, paid, paid - total,
-          clientRef])).rows[0];
+           tax_percent, tax_amount, total, cogs, payment_method, paid, change_amount, client_ref,
+           customer_name, customer_phone, recorded_offline, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,COALESCE($19::timestamptz, NOW()))
+         RETURNING *`,
+        [storeId, invoice, actor(req), subtotal, dType, dValue, discount, taxPct, tax, total, cogs, method, paid,
+          method === 'cash' ? paid - total : 0, clientRef, customerName, customerPhone, offline, occurredAt])).rows[0];
       for (const w of wanted) {
         const p = by[w.id];
         const after = p.stock - w.qty;
@@ -536,7 +585,7 @@ function mountApi({ app, pool, IS_STAGING }) {
         await client.query('UPDATE products SET stock = $1 WHERE id = $2', [after, p.id]);
         await client.query(
           `INSERT INTO stock_movements (store_id, product_id, type, qty_change, stock_after, note, ref, actor)
-           VALUES ($1,$2,'sale',$3,$4,'',$5,$6)`, [storeId, p.id, -w.qty, after, invoice, actor(req)]);
+           VALUES ($1,$2,'sale',$3,$4,$5,$6,$7)`, [storeId, p.id, -w.qty, after, offline ? 'Offline' : '', invoice, actor(req)]);
       }
       await client.query('COMMIT');
       res.status(201).json({ sale: saleRow(sale) });
@@ -561,6 +610,35 @@ function mountApi({ app, pool, IS_STAGING }) {
       sale: saleRow(sale.rows[0]),
       items: items.rows.map((i) => ({ name: i.name, sku: i.sku, qty: i.qty, listPrice: i.list_price, price: i.price })),
     });
+  }));
+
+  // ── Utang belum lunas ──
+  app.get('/api/debts', h(async (req, res) => {
+    if (!req.store) return res.json({ debts: [], total: 0, count: 0 });
+    const open = `store_id = $1 AND payment_method = 'debt' AND debt_paid_at IS NULL`;
+    const sum = (await pool.query(
+      `SELECT COUNT(*)::int AS count, COALESCE(SUM(total),0)::bigint AS total FROM sales WHERE ${open}`,
+      [req.store.id])).rows[0];
+    const { rows } = await pool.query(`SELECT * FROM sales WHERE ${open} ORDER BY id DESC LIMIT 200`, [req.store.id]);
+    res.json({ debts: rows.map(saleRow), total: Number(sum.total), count: sum.count });
+  }));
+
+  // Settling a debt records when and how it was paid. It does not change the
+  // report: the sale already counted as omzet on the day it was made.
+  app.post('/api/sales/:id/settle', h(async (req, res) => {
+    if (!req.store) throw new HttpError(404, 'Transaksi tidak ditemukan');
+    const id = int(req.params.id, 'ID');
+    const method = (req.body || {}).method;
+    if (!SETTLE_METHODS.includes(method)) throw bad('Metode pembayaran tidak valid');
+    const { rows } = await pool.query(
+      `UPDATE sales SET debt_paid_at = $1, debt_paid_method = $2
+       WHERE id = $3 AND store_id = $4 AND payment_method = 'debt' AND debt_paid_at IS NULL RETURNING *`,
+      [req.now, method, id, req.store.id]);
+    if (rows.length) return res.json({ sale: saleRow(rows[0]) });
+    const cur = await pool.query(
+      `SELECT debt_paid_at FROM sales WHERE id = $1 AND store_id = $2 AND payment_method = 'debt'`, [id, req.store.id]);
+    if (cur.rows.length) throw new HttpError(409, 'Utang ini sudah lunas');
+    throw new HttpError(404, 'Utang tidak ditemukan');
   }));
 
   // Daily or monthly report. Omzet = sales after discount, before PPN; PPN is

@@ -45,6 +45,24 @@
       "name": "Report tab without a store shows the first-store screen",
       "path": "/#laporan",
       "expectText": "Belum ada toko"
+    },
+    {
+      "id": "kasir.debt-method",
+      "name": "Checkout offers Utang with a customer name field",
+      "path": "/",
+      "expectSelector": "#pay-methods [data-method=debt]"
+    },
+    {
+      "id": "kasir.receipt-whatsapp",
+      "name": "The receipt can be sent through WhatsApp",
+      "path": "/",
+      "expectSelector": "#dlg-receipt #receipt-wa-send"
+    },
+    {
+      "id": "offline.sw",
+      "name": "The app ships a service worker so it opens offline",
+      "path": "/sw.js",
+      "expectText": "kasirku-shell"
     }
   ]
 }

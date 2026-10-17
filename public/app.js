@@ -9,7 +9,7 @@
   const rp = (n) => (n < 0 ? '-Rp ' : 'Rp ') + Math.abs(Math.round(n)).toLocaleString('id-ID');
   const digits = (v) => parseInt(String(v).replace(/\D/g, ''), 10) || 0;
   const dec = (v) => { const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
-  const METHODS = { cash: 'Tunai', qris: 'QRIS', debit: 'Debit', transfer: 'Transfer bank' };
+  const METHODS = { cash: 'Tunai', qris: 'QRIS', debit: 'Debit', transfer: 'Transfer bank', debt: 'Utang' };
   const MOVES = { restock: 'Barang masuk', return: 'Retur', opname: 'Stok opname', sale: 'Penjualan' };
 
   const now = () => (window.usernode && usernode.now ? usernode.now() : new Date());
@@ -37,6 +37,48 @@
     try { localStorage.setItem('kasirku-onboarded-' + id, '1'); } catch (_) {}
   }
 
+  // ── Offline (per account, on this device) ──
+  // An offline load carries no token, so the page remembers who it was for
+  // (`kasirku-user`, from /api/stores) and keeps everything per account:
+  // the last catalog it saw (`kasirku:u<id>:cache`) and the sales rung up
+  // while offline that still have to be sent (`kasirku:u<id>:outbox`).
+  // Nothing here is ever deleted just because a load has no token.
+  function readJson(key) {
+    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch (_) { return null; }
+  }
+  // Writes and reads back, so a device that refuses storage is found out
+  // instead of trusted.
+  function writeJson(key, value) {
+    try {
+      const v = JSON.stringify(value);
+      localStorage.setItem(key, v);
+      return localStorage.getItem(key) === v;
+    } catch (_) { return false; }
+  }
+  const storageOk = (function () {
+    try { localStorage.setItem('kasirku-probe', '1'); const ok = localStorage.getItem('kasirku-probe') === '1'; localStorage.removeItem('kasirku-probe'); return ok; } catch (_) { return false; }
+  })();
+  let me = readJson('kasirku-user');
+  const userKey = (part) => (me && me.id != null ? 'kasirku:u' + me.id + ':' + part : null);
+  function readCache() {
+    const c = userKey('cache') && readJson(userKey('cache'));
+    return c && typeof c === 'object' ? c : { stores: null, storeById: {}, productsByStore: {}, savedAt: null };
+  }
+  function updateCache(fn) {
+    if (!userKey('cache')) return;
+    const c = readCache(); fn(c); c.savedAt = new Date().toISOString();
+    writeJson(userKey('cache'), c);
+  }
+  function readOutbox() {
+    const list = userKey('outbox') && readJson(userKey('outbox'));
+    return Array.isArray(list) ? list : [];
+  }
+  const writeOutbox = (list) => !!userKey('outbox') && writeJson(userKey('outbox'), list);
+  const canQueue = () => storageOk && !!userKey('outbox');
+  // The short reference printed on a receipt made offline ("OFF-7F3A2C"); the
+  // server prints the same one once the sale has arrived.
+  const offRef = (ref) => 'OFF-' + String(ref || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toUpperCase();
+
   // ── API ──
   const urlToken = new URLSearchParams(location.search).get('token');
   if (urlToken) { try { sessionStorage.setItem('kasirku-token', urlToken); } catch (_) {} }
@@ -48,16 +90,19 @@
     const o = opts || {};
     const headers = { 'content-type': 'application/json' };
     if (token()) headers['x-usernode-token'] = token();
-    if (S.activeStoreId) headers['x-usernode-store'] = String(S.activeStoreId);
+    const storeId = o.store || S.activeStoreId;
+    if (storeId) headers['x-usernode-store'] = String(storeId);
     if (window.usernode && usernode.previewNow) headers['x-usernode-now'] = usernode.now().toISOString();
     let res;
     try {
       res = await fetch(path, { method: o.method || 'GET', headers, body: o.body ? JSON.stringify(o.body) : undefined });
     } catch (_) {
+      setOffline(true);
       const err = new Error('Koneksi terputus');
       err.status = 0;
       throw err;
     }
+    setOffline(false);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const err = new Error(data.error === 'account_required' ? 'Masuk ke akun Homeroom untuk mengubah data' : (data.error || 'Permintaan gagal'));
@@ -75,7 +120,8 @@
     checkoutRef: null, payUncertain: false,
     movements: null, movementsState: 'loading', report: null, reportState: 'loading', reportDate: today(),
     reportMode: 'daily', reportMonth: today().slice(0, 7),
-    receipt: null,
+    receipt: null, customerName: '', customerPhone: '',
+    offline: false, sendingRef: null, debts: null, debtsState: 'loading', settleId: null, settleMethod: 'cash',
   };
   const hasStore = () => !!S.activeStoreId;
 
@@ -117,9 +163,19 @@
   // ── Loading ──
   async function loadStores() {
     try {
-      S.stores = (await api('/api/stores')).stores;
+      const data = await api('/api/stores');
+      S.stores = data.stores;
       S.storesState = 'ok';
-    } catch (e) { S.storesState = 'error'; S.stores = []; }
+      if (data.me && data.me.id != null) {
+        me = { id: data.me.id, username: data.me.username || '' };
+        writeJson('kasirku-user', me);
+      }
+      updateCache((c) => { c.stores = S.stores; });
+    } catch (e) {
+      // Offline: the stores this account had on the last online visit.
+      const cached = !e.status && readCache().stores;
+      if (cached) { S.stores = cached; S.storesState = 'ok'; } else { S.storesState = 'error'; S.stores = []; }
+    }
     const ids = S.stores.map((s) => s.id);
     if (S.activeStoreId && !ids.includes(S.activeStoreId)) S.activeStoreId = null;
     if (!S.activeStoreId && ids.length) S.activeStoreId = ids[0];
@@ -131,22 +187,51 @@
     if (!hasStore()) { S.store = null; renderBrand(); renderOnboarding(); return; }
     try {
       S.store = await api('/api/store');
+      if (S.store) updateCache((c) => { c.storeById = c.storeById || {}; c.storeById[S.store.id] = S.store; });
       S.taxPct = S.store ? S.store.taxPercent : 11;
       $('#tax-pct').value = String(S.taxPct);
       $('#staging-note').hidden = !(S.store && S.store.staging);
       renderBrand();
       renderCart();
       renderOnboarding();
-    } catch (e) { S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', taxPercent: 11 }; renderBrand(); renderOnboarding(); }
+    } catch (e) {
+      const cached = !e.status && ((readCache().storeById || {})[S.activeStoreId] || S.stores.find((x) => x.id === S.activeStoreId));
+      if (cached) {
+        S.store = cached; S.taxPct = cached.taxPercent; $('#tax-pct').value = String(S.taxPct);
+        $('#staging-note').hidden = !cached.staging;
+        renderCart();
+      } else S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', taxPercent: 11 };
+      renderBrand(); renderOnboarding();
+    }
   }
+  // The catalog as the server last answered, minus the sales still waiting
+  // in this device's queue (they are not on the server yet).
+  let baseProducts = [];
+  function withPending(list) {
+    const sold = {};
+    readOutbox().filter((x) => x.state !== 'failed' && x.storeId === S.activeStoreId)
+      .forEach((x) => (x.body.items || []).forEach((i) => { sold[i.productId] = (sold[i.productId] || 0) + i.qty; }));
+    return list.map((p) => {
+      if (!sold[p.id]) return p;
+      const stock = p.stock - sold[p.id];
+      return Object.assign({}, p, { stock, low: stock < p.minStock, out: stock <= 0 });
+    });
+  }
+  function applyPending() { S.products = withPending(baseProducts); }
   async function loadProducts() {
     if (!hasStore()) { S.products = []; S.productsState = 'ok'; renderProducts(); return; }
     S.productsState = 'loading'; renderProducts();
+    const storeId = S.activeStoreId;
     try {
-      S.products = (await api('/api/products')).products;
+      baseProducts = (await api('/api/products')).products;
+      updateCache((c) => { c.productsByStore = c.productsByStore || {}; c.productsByStore[storeId] = baseProducts; });
+      applyPending();
       S.productsState = 'ok';
       reconcileCart();
-    } catch (e) { S.productsState = 'error'; }
+    } catch (e) {
+      const cached = !e.status && (readCache().productsByStore || {})[storeId];
+      if (cached) { baseProducts = cached; applyPending(); S.productsState = 'ok'; reconcileCart(); } else S.productsState = 'error';
+    }
     renderProducts();
   }
   async function loadMovements() {
@@ -163,6 +248,13 @@
       : '/api/reports?date=' + encodeURIComponent(S.reportDate);
     try { S.report = await api(url); S.reportState = 'ok'; } catch (e) { S.reportState = 'error'; }
     renderReport();
+    loadDebts();
+  }
+  async function loadDebts() {
+    if (!hasStore()) { S.debts = null; renderDebts(); return; }
+    S.debtsState = 'loading'; renderDebts();
+    try { S.debts = await api('/api/debts'); S.debtsState = 'ok'; } catch (e) { S.debtsState = 'error'; }
+    renderDebts();
   }
 
   // ── Shell: the no-store gate vs the tabs ──
@@ -185,6 +277,7 @@
     });
     renderBrand();
     renderOnboarding();
+    renderOffline();
   }
 
   // ── Shared state blocks ──
@@ -192,6 +285,129 @@
   const errorBox = (what, retry) => '<div class="state-error rounded-xl border border-line bg-surface" role="alert"><p class="text-heading">' + esc(what) + ' gagal dimuat</p>'
     + '<p class="text-body text-muted">Data lain di layar ini tetap bisa dipakai. Periksa koneksi, lalu coba lagi.</p>'
     + '<button type="button" class="btn-secondary" data-retry="' + retry + '">Coba lagi</button></div>';
+
+  // While offline, screens that need the server say so (with Retry) instead
+  // of a generic load failure.
+  const offlineBox = (what) => '<div class="state-error rounded-xl border border-line bg-surface" role="status"><p class="text-heading">' + esc(what) + ' butuh koneksi internet</p>'
+    + '<p class="text-body text-muted">Kasir tetap bisa dipakai. Penjualan disimpan di perangkat ini dan dikirim otomatis saat online.</p>'
+    + '<button type="button" class="btn-secondary" data-retry="online">Coba lagi</button></div>';
+
+  // ── Offline band and sync ──
+  // S.offline flips on any request that cannot reach the server (and the
+  // browser's own offline event) and back on the next one that does.
+  function setOffline(v) {
+    if (v === S.offline) return;
+    S.offline = v;
+    renderOffline();
+    if (!v) setTimeout(onReconnect, 0);
+  }
+  async function onReconnect() {
+    await sync();
+    if (!hasStore()) return;
+    loadStore(); loadProducts();
+    if (S.tab === 'stok') loadMovements();
+    if (S.tab === 'laporan') loadReport();
+  }
+  function renderOffline() {
+    const list = readOutbox();
+    const waiting = list.filter((x) => x.state !== 'failed').length;
+    const failed = list.length - waiting;
+    let msg = '';
+    if (S.offline && !canQueue()) msg = 'Perangkat ini tidak bisa menyimpan transaksi offline. Tunggu sampai online untuk membayar.';
+    else if (S.offline) {
+      const saved = readCache().savedAt;
+      msg = 'Offline. Transaksi disimpan di perangkat ini dan dikirim otomatis saat online.'
+        + (waiting ? ' <strong>' + waiting + ' menunggu dikirim.</strong>' : '')
+        + (saved ? ' Data produk per jam ' + fmtTime(saved) + '.' : '');
+    } else if (S.sendingRef) msg = 'Mengirim ' + waiting + ' transaksi…';
+    else if (waiting) msg = waiting + ' transaksi offline menunggu dikirim.';
+    if (failed) msg += (msg ? ' ' : '') + '<strong>' + failed + ' perlu dicek.</strong>';
+    $('#offline-band').hidden = !msg;
+    $('#offline-text').innerHTML = msg;
+    $('#offline-view').hidden = !list.length;
+    // Writes other than a sale wait for the connection.
+    ['#add-product', '#open-store', '#store-switch-btn'].forEach((sel) => {
+      const b = $(sel);
+      b.disabled = S.offline;
+      if (S.offline) b.title = 'Butuh koneksi'; else b.removeAttribute('title');
+    });
+    if ($('#dlg-outbox').open) renderOutbox();
+    updateTotals();
+    if (S.tab === 'stok') { renderStockList(); renderMovements(); }
+    if (S.tab === 'laporan') { renderReport(); renderDebts(); }
+  }
+
+  // Sends the queued sales one at a time, oldest first, each to the store it
+  // was rung up in. The same clientRef means a sale that did reach the server
+  // before the connection dropped is answered, not recorded twice.
+  let syncing = false;
+  async function sync() {
+    if (syncing || !canQueue()) return;
+    const queue = readOutbox().filter((x) => x.state !== 'failed');
+    if (!queue.length) return;
+    syncing = true;
+    let sent = 0;
+    try {
+      for (const item of queue) {
+        S.sendingRef = item.clientRef; renderOffline();
+        try {
+          await api('/api/sales', { method: 'POST', body: item.body, store: item.storeId });
+          writeOutbox(readOutbox().filter((x) => x.clientRef !== item.clientRef));
+          sent += 1;
+        } catch (e) {
+          // No connection, signed out, or the server is busy: try again later.
+          if (!e.status || e.status === 401 || e.status === 408 || e.status === 429 || e.status >= 500) break;
+          // Refused for good: keep it, flagged, until the owner removes it.
+          writeOutbox(readOutbox().map((x) => (x.clientRef === item.clientRef ? Object.assign({}, x, { state: 'failed', error: e.message }) : x)));
+        }
+      }
+    } finally {
+      syncing = false; S.sendingRef = null;
+    }
+    renderOffline();
+    if (sent) {
+      toast(sent + ' transaksi offline sudah tersinkron');
+      if (S.store) S.store.hasSales = true;
+      if (hasStore()) { loadProducts(); loadMovements(); if (S.tab === 'laporan') loadReport(); }
+    }
+  }
+
+  // ── Transaksi offline (the queue) ──
+  function renderOutbox() {
+    const list = readOutbox();
+    const box = $('#outbox-list');
+    $('#outbox-note').textContent = S.offline
+      ? 'Dikirim otomatis saat perangkat ini online lagi.' : 'Transaksi yang dicatat saat offline di perangkat ini.';
+    if (!list.length) {
+      box.innerHTML = '<div class="state-empty rounded-xl border border-line bg-surface"><p class="text-body text-muted">Semua transaksi offline sudah tersinkron.</p></div>';
+      return;
+    }
+    const many = S.stores.length > 1;
+    box.innerHTML = '<ul class="list">' + list.map((x) => {
+      const sale = x.local.sale;
+      const status = x.state === 'failed' ? '<span class="badge text-danger shrink-0">Perlu dicek</span>'
+        : x.clientRef === S.sendingRef ? '<span class="badge text-accent shrink-0">Sedang dikirim</span>'
+          : '<span class="badge text-muted shrink-0">Menunggu dikirim</span>';
+      const storeName = many ? ((S.stores.find((st) => st.id === x.storeId) || {}).name || '') : '';
+      return '<li class="flex flex-col gap-2 px-4 py-3"><div class="flex items-center gap-3">'
+        + '<button type="button" data-outbox-receipt="' + esc(x.clientRef) + '" class="min-w-0 grow rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">'
+        + '<p class="text-body font-medium">' + rp(sale.total) + ' · ' + esc(METHODS[sale.paymentMethod] || '') + '</p>'
+        + '<p class="text-small text-muted">' + esc(sale.invoiceNo) + ' · ' + fmtDateTime(sale.createdAt) + (storeName ? ' · ' + esc(storeName) : '') + '</p></button>'
+        + status + '</div>'
+        + (x.state === 'failed'
+          ? '<p class="text-small text-danger">' + esc(x.error || 'Ditolak server') + '</p>'
+            + '<div class="flex justify-end"><button type="button" class="btn-secondary" data-outbox-drop="' + esc(x.clientRef) + '">Hapus dari antrean</button></div>'
+          : '')
+        + '</li>';
+    }).join('') + '</ul>';
+  }
+  function openOutbox() { renderOutbox(); $('#dlg-outbox').showModal(); }
+  function showLocalReceipt(ref) {
+    const item = readOutbox().find((x) => x.clientRef === ref);
+    if (!item) return;
+    if ($('#dlg-outbox').open) $('#dlg-outbox').close();
+    openReceipt(item.local);
+  }
 
   // ── Brand ──
   function renderBrand() {
@@ -402,7 +618,22 @@
     if (free) return 'Isi harga satuan ' + free.name + '.';
     if (t.total > 2000000000) return 'Total transaksi terlalu besar.';
     if (S.method === 'cash' && S.paid < t.total) return 'Uang diterima masih kurang ' + rp(t.total - S.paid) + '.';
+    if (S.method === 'debt' && !S.customerName.trim()) return 'Isi nama pelanggan untuk utang.';
+    if (S.method === 'debt' && S.customerPhone.trim() && waNumber(S.customerPhone) === null) return 'Nomor WhatsApp pelanggan tidak valid.';
+    if (S.offline && !canQueue()) return 'Perangkat ini tidak bisa menyimpan transaksi offline. Tunggu sampai online untuk membayar.';
     return '';
+  }
+
+  // A WhatsApp number in international form ("0812-3456 7890" → 6281234567890),
+  // '' when nothing was typed, null when it cannot be a phone number.
+  function waNumber(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    if (!/^[0-9 +().-]+$/.test(s)) return null;
+    let d = s.replace(/\D/g, '');
+    if (d[0] === '0') d = '62' + d.slice(1);
+    else if (d[0] === '8') d = '62' + d;
+    return d.length >= 9 && d.length <= 15 ? d : null;
   }
 
   function renderCart() {
@@ -437,6 +668,7 @@
     S.cart.forEach((l) => { const el = $('[data-line-total="' + l.id + '"]'); if (el) el.textContent = rp(l.qty * l.price); });
     const cash = S.method === 'cash';
     $('#cash-box').hidden = !cash;
+    $('#debt-box').hidden = S.method !== 'debt';
     const change = S.paid - t.total;
     $('#t-change').textContent = rp(cash && change > 0 ? change : 0);
     const quick = [t.total, Math.ceil(t.total / 10000) * 10000, Math.ceil(t.total / 50000) * 50000, Math.ceil(t.total / 100000) * 100000];
@@ -460,22 +692,69 @@
     return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
   }
 
+  // After a sale is recorded (on the server or on this device): a fresh cart.
+  function resetCheckout() {
+    cartChanged();
+    S.cart = []; S.paid = 0; $('#cash-paid').value = '';
+    S.discType = 'none'; S.discValue = 0; $('#disc-type').value = 'none'; $('#disc-value').value = ''; $('#disc-value').disabled = true;
+    S.customerName = ''; S.customerPhone = ''; $('#debt-name').value = ''; $('#debt-phone').value = '';
+  }
+
+  // Offline: the sale goes into this device's queue, under the same
+  // reference an interrupted attempt already used, and its receipt is shown
+  // at once. Nothing is shown as saved unless the queue really holds it.
+  function saveOffline(body, t) {
+    const ref = body.clientRef;
+    const occurredAt = now().toISOString();
+    const st = S.store || {};
+    const item = {
+      clientRef: ref, storeId: S.activeStoreId, occurredAt, state: 'pending', error: '',
+      body: Object.assign({}, body, { offline: true, occurredAt }),
+      local: {
+        pending: true,
+        store: { name: st.name, address: st.address, phone: st.phone, logoUrl: st.logoUrl },
+        sale: {
+          id: null, invoiceNo: offRef(ref), createdAt: occurredAt, cashier: (me && me.username) || '',
+          subtotal: t.subtotal, discountType: S.discType, discountValue: S.discValue, discountAmount: t.discount,
+          taxPercent: S.taxPct, taxAmount: t.tax, total: t.total, paymentMethod: S.method,
+          paid: body.paid, change: S.method === 'cash' ? body.paid - t.total : 0,
+          customerName: body.customerName, customerPhone: body.customerPhone, debtPaidAt: null,
+        },
+        items: S.cart.map((l) => ({ name: l.name, sku: l.sku, qty: l.qty, listPrice: l.listPrice, price: l.price })),
+      },
+    };
+    const list = readOutbox();
+    if (!list.some((x) => x.clientRef === ref)) list.push(item);
+    if (!writeOutbox(list)) {
+      toast('Transaksi gagal disimpan di perangkat ini. Tunggu sampai online untuk membayar.');
+      updateTotals();
+      return;
+    }
+    resetCheckout();
+    applyPending(); reconcileCart();
+    renderCart(); renderPos(); renderOffline();
+    toast('Tersimpan offline. Akan dikirim otomatis saat online.');
+    openReceipt(item.local);
+  }
+
   async function checkout() {
     const t = calc();
     if (S.paying || cartProblem(t)) return;
     // Kept across a failed attempt whose outcome is unknown, so the retry is
     // recognised by the server and never records the sale twice.
     S.checkoutRef = S.checkoutRef || newRef();
+    const debt = S.method === 'debt';
+    const body = {
+      items: S.cart.map((l) => ({ productId: l.id, qty: l.qty, price: l.price })),
+      discountType: S.discType, discountValue: S.discValue, taxPercent: S.taxPct,
+      paymentMethod: S.method, paid: S.method === 'cash' ? S.paid : debt ? 0 : t.total, clientRef: S.checkoutRef,
+      customerName: debt ? S.customerName.trim() : '', customerPhone: debt ? S.customerPhone.trim() : '',
+    };
+    if (S.offline && canQueue()) { saveOffline(body, t); return; }
     S.paying = true; updateTotals();
     try {
-      const { sale } = await api('/api/sales', { method: 'POST', body: {
-        items: S.cart.map((l) => ({ productId: l.id, qty: l.qty, price: l.price })),
-        discountType: S.discType, discountValue: S.discValue, taxPercent: S.taxPct,
-        paymentMethod: S.method, paid: S.method === 'cash' ? S.paid : t.total, clientRef: S.checkoutRef,
-      } });
-      cartChanged();
-      S.cart = []; S.paid = 0; $('#cash-paid').value = '';
-      S.discType = 'none'; S.discValue = 0; $('#disc-type').value = 'none'; $('#disc-value').value = ''; $('#disc-value').disabled = true;
+      const { sale } = await api('/api/sales', { method: 'POST', body });
+      resetCheckout();
       S.paying = false;
       // The first sale completes the checklist: the next render sees hasSales
       // and hides "Langkah awal" for this store for good.
@@ -486,6 +765,9 @@
       showReceipt(sale.id);
     } catch (e) {
       S.paying = false;
+      // The connection dropped: queue it offline under the same reference, so
+      // if it did reach the server the sync is answered with that sale.
+      if (!e.status && canQueue()) { saveOffline(body, t); return; }
       if (!e.status || e.status >= 500) {
         // The sale may or may not have been recorded: keep the reference.
         S.payUncertain = true; updateTotals();
@@ -507,6 +789,7 @@
   function renderStockList() {
     const box = $('#stock-list');
     const alertBox = $('#low-alert');
+    if (S.offline) { box.innerHTML = offlineBox('Manajemen stok gudang'); alertBox.innerHTML = ''; return; }
     if (S.productsState === 'loading') { box.innerHTML = skeletonRows(5); alertBox.innerHTML = ''; return; }
     if (S.productsState === 'error') { box.innerHTML = errorBox('Daftar produk', 'products'); alertBox.innerHTML = ''; return; }
     const low = S.products.filter((p) => p.low || p.out);
@@ -535,6 +818,7 @@
   }
   function renderMovements() {
     const box = $('#movement-list');
+    if (S.offline) { box.innerHTML = ''; return; }
     if (S.movementsState === 'loading') { box.innerHTML = skeletonRows(3); return; }
     if (S.movementsState === 'error') { box.innerHTML = errorBox('Riwayat stok', 'movements'); return; }
     if (!S.movements.length) { box.innerHTML = '<div class="state-empty rounded-xl border border-line bg-surface"><p class="text-body text-muted">Belum ada pergerakan stok. Restock atau penjualan akan tercatat di sini.</p></div>'; return; }
@@ -699,14 +983,17 @@
 
   // ── Struk ──
   function receiptHtml(r) {
-    const s = S.store || {}; const x = r.sale;
+    const s = r.store || S.store || {}; const x = r.sale;
     const row = (a, b, strong) => '<div class="flex justify-between gap-3' + (strong ? ' font-bold' : '') + '"><span>' + a + '</span><span class="shrink-0">' + b + '</span></div>';
     const rule = '<div class="my-2 border-t border-dashed border-line"></div>';
     return '<div class="mx-auto w-full max-w-xs bg-surface font-mono text-small text-fg">'
       + '<div class="flex flex-col items-center gap-1 text-center">' + storeLogo('h-12 w-12')
       + '<p class="text-body font-bold">' + esc(s.name || 'KasirKU') + '</p>'
-      + (s.address ? '<p>' + esc(s.address) + '</p>' : '') + (s.phone ? '<p>Telp. ' + esc(s.phone) + '</p>' : '') + '</div>' + rule
-      + row('No. invoice', esc(x.invoiceNo)) + row('Tanggal', fmtDateTime(x.createdAt)) + (x.cashier ? row('Kasir', esc(x.cashier)) : '') + rule
+      + (s.address ? '<p>' + esc(s.address) + '</p>' : '') + (s.phone ? '<p>Telp. ' + esc(s.phone) + '</p>' : '')
+      + (r.pending ? '<p><span class="badge">Belum tersinkron</span></p>' : '') + '</div>' + rule
+      + (r.pending ? row('No. sementara', esc(x.invoiceNo)) : row('No. invoice', esc(x.invoiceNo)))
+      + (x.recordedOffline && x.clientRef ? row('Dicatat offline', esc(offRef(x.clientRef))) : '')
+      + row('Tanggal', fmtDateTime(x.createdAt)) + (x.cashier ? row('Kasir', esc(x.cashier)) : '') + rule
       + r.items.map((i) => '<div class="mb-1"><p>' + esc(i.name) + '</p>'
         + row(i.qty + ' x ' + rp(i.price) + (i.price !== i.listPrice ? ' *' : ''), rp(i.qty * i.price))
         + '</div>').join('')
@@ -715,28 +1002,70 @@
       + (x.discountAmount ? row('Diskon' + (x.discountType === 'percent' ? ' (' + x.discountValue + '%)' : ''), '-' + rp(x.discountAmount)) : '')
       + row('PPN (' + x.taxPercent + '%)', rp(x.taxAmount)) + row('TOTAL', rp(x.total), true) + rule
       + row('Pembayaran', METHODS[x.paymentMethod])
-      + (x.paymentMethod === 'cash' ? row('Tunai', rp(x.paid)) + row('Kembalian', rp(x.change)) : row('Dibayar', rp(x.paid))) + rule
+      + (x.paymentMethod === 'cash' ? row('Tunai', rp(x.paid)) + row('Kembalian', rp(x.change))
+        : x.paymentMethod === 'debt' ? row('Pelanggan', esc(x.customerName)) + row('Sisa utang', rp(x.debtPaidAt ? 0 : x.total))
+          + (x.debtPaidAt ? row('Lunas', fmtDateTime(x.debtPaidAt) + ' · ' + (METHODS[x.debtPaidMethod] || '')) : '')
+        : row('Dibayar', rp(x.paid))) + rule
       + '<p class="text-center">Terima kasih telah berbelanja</p><p class="text-center text-muted">Struk dibuat dengan KasirKU</p></div>';
+  }
+  function openReceipt(r) {
+    S.receipt = r;
+    $('#receipt-view').innerHTML = receiptHtml(r);
+    $('#receipt-wa').value = r.sale.customerPhone || '';
+    $('#receipt-wa-err').textContent = '';
+    if (!$('#dlg-receipt').open) $('#dlg-receipt').showModal();
   }
   async function showReceipt(id) {
     try {
-      S.receipt = await api('/api/sales/' + id);
-      $('#receipt-view').innerHTML = receiptHtml(S.receipt);
-      $('#dlg-receipt').showModal();
+      openReceipt(await api('/api/sales/' + id));
     } catch (e) { toast('Struk gagal dimuat: ' + e.message); }
   }
+  // The receipt as a chat message: WhatsApp shows *…* in bold. Lines that do
+  // not apply are null and dropped; '' is a blank line between sections.
   function receiptText(r) {
-    const s = S.store || {}; const x = r.sale;
-    return [s.name || 'KasirKU', s.address, s.phone, '', 'Invoice: ' + x.invoiceNo, 'Tanggal: ' + fmtDateTime(x.createdAt), '']
-      .concat(r.items.map((i) => i.name + ' ' + i.qty + ' x ' + rp(i.price) + ' = ' + rp(i.qty * i.price)))
-      .concat(['', 'Subtotal: ' + rp(x.subtotal), x.discountAmount ? 'Diskon: -' + rp(x.discountAmount) : '', 'PPN (' + x.taxPercent + '%): ' + rp(x.taxAmount),
-        'TOTAL: ' + rp(x.total), 'Pembayaran: ' + METHODS[x.paymentMethod], x.paymentMethod === 'cash' ? 'Tunai: ' + rp(x.paid) + ', kembalian: ' + rp(x.change) : '', '', 'Terima kasih telah berbelanja'])
-      .filter((l) => l !== undefined && l !== null && (l !== '' || true)).join('\n').replace(/\n{3,}/g, '\n\n');
+    const s = r.store || S.store || {}; const x = r.sale;
+    const name = s.name || 'KasirKU';
+    const lines = [
+      '*' + name + '*', s.address || null, '',
+      (r.pending ? 'No. sementara: ' : 'Invoice: ') + x.invoiceNo,
+      x.recordedOffline && x.clientRef ? 'Dicatat offline: ' + offRef(x.clientRef) : null,
+      'Tanggal: ' + fmtDateTime(x.createdAt), '',
+    ].concat(r.items.map((i) => i.name + ' ' + i.qty + ' x ' + rp(i.price) + ' = ' + rp(i.qty * i.price)))
+      .concat([
+        '', 'Subtotal: ' + rp(x.subtotal),
+        x.discountAmount ? 'Diskon: -' + rp(x.discountAmount) : null,
+        'PPN (' + x.taxPercent + '%): ' + rp(x.taxAmount),
+        '*TOTAL: ' + rp(x.total) + '*',
+        'Pembayaran: ' + METHODS[x.paymentMethod],
+        x.paymentMethod === 'cash' ? 'Tunai: ' + rp(x.paid) + ', kembalian: ' + rp(x.change) : null,
+        x.paymentMethod === 'debt' ? 'Pelanggan: ' + x.customerName : null,
+        x.paymentMethod === 'debt' ? 'Sisa utang: ' + rp(x.debtPaidAt ? 0 : x.total) : null,
+        '', 'Terima kasih telah berbelanja di ' + name,
+        s.phone ? 'Telp. ' + s.phone : null,
+      ]);
+    return lines.filter((l) => l != null).join('\n').replace(/\n{3,}/g, '\n\n').trim();
   }
   $('#receipt-print').addEventListener('click', () => {
     if (!S.receipt) return;
     $('#print-area').innerHTML = receiptHtml(S.receipt);
     window.print();
+  });
+  // Opens WhatsApp with the receipt typed in, to the customer when a number
+  // is given. Runs inside the tap, so the new window is allowed; if the frame
+  // still refuses it, the text is copied for pasting instead.
+  $('#receipt-wa-send').addEventListener('click', async () => {
+    if (!S.receipt) return;
+    const num = waNumber($('#receipt-wa').value);
+    if (num === null) { $('#receipt-wa-err').textContent = 'Nomor WhatsApp tidak valid'; return; }
+    $('#receipt-wa-err').textContent = '';
+    const text = receiptText(S.receipt);
+    const url = 'https://wa.me/' + num + '?text=' + encodeURIComponent(text);
+    let opened = null;
+    try { opened = window.open(url, '_blank'); } catch (_) { opened = null; }
+    if (opened) { try { opened.opener = null; } catch (_) { /* cross-origin already */ } }
+    else {
+      try { await navigator.clipboard.writeText(text); toast('Teks struk disalin, tempel di WhatsApp'); } catch (_) { toast('WhatsApp tidak bisa dibuka dari sini'); }
+    }
   });
   $('#receipt-share').addEventListener('click', async () => {
     if (!S.receipt) return;
@@ -755,16 +1084,21 @@
   }
   function renderReport() {
     const box = $('#report-body');
+    if (S.offline) { box.innerHTML = offlineBox('Laporan penjualan'); return; }
     if (S.reportState === 'loading') { box.innerHTML = skeletonRows(4); return; }
     if (S.reportState === 'error') { box.innerHTML = errorBox('Laporan penjualan', 'report'); return; }
     if (!S.report) { box.innerHTML = ''; return; }
     const r = S.report; const m = r.summary;
     const monthly = r.mode === 'monthly';
+    // Sales still in this device's queue are not on the server yet.
+    const queued = readOutbox().filter((x) => x.storeId === S.activeStoreId).length;
+    const queuedNote = queued ? '<p class="rounded-xl border border-line bg-surface px-4 py-3 text-body" role="status">'
+      + queued + ' transaksi offline belum masuk laporan</p>' : '';
     const rowTime = (x) => (monthly ? fmtDateTime(x.createdAt) : fmtTime(x.createdAt));
     const stat = (label, value, note) => '<div class="flex flex-col gap-1 p-4"><dt class="text-small text-muted">' + label + '</dt><dd class="text-heading">' + value + '</dd>'
       + (note ? '<dd class="text-small text-muted">' + note + '</dd>' : '') + '</div>';
     const margin = m.revenue ? Math.round(m.grossProfit / m.revenue * 100) : 0;
-    let html = '<dl class="grid grid-cols-2 divide-x divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface lg:grid-cols-4 lg:divide-y-0">'
+    let html = queuedNote + '<dl class="grid grid-cols-2 divide-x divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface lg:grid-cols-4 lg:divide-y-0">'
       + stat('Omzet', rp(m.revenue), 'Penjualan setelah diskon, sebelum PPN')
       + stat('HPP (harga pokok penjualan)', rp(m.cogs), 'Total harga modal barang terjual')
       + stat('Estimasi laba kotor', rp(m.grossProfit), m.revenue ? 'Margin ' + margin + '%' : 'Omzet dikurangi HPP')
@@ -779,10 +1113,52 @@
       '<li class="list-row"><span class="grow text-body">' + METHODS[x.method] + '</span><span class="text-small text-muted">' + x.count + ' transaksi</span><span class="w-32 text-right text-body font-medium">' + rp(x.total) + '</span></li>').join('') + '</ul></div>';
     html += '<div><h3 class="section-label">Riwayat transaksi</h3><ul class="list">' + r.sales.map((x) =>
       '<li><button type="button" data-receipt="' + x.id + '" class="list-row w-full text-left hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">'
-      + '<div class="min-w-0 grow"><p class="text-body font-medium">' + esc(x.invoiceNo) + '</p><p class="text-small text-muted">' + rowTime(x) + ' · ' + METHODS[x.paymentMethod] + '</p></div>'
+      + '<div class="min-w-0 grow"><p class="text-body font-medium">' + esc(x.invoiceNo) + '</p><p class="text-small text-muted">' + rowTime(x) + ' · ' + METHODS[x.paymentMethod]
+      + (x.paymentMethod === 'debt' && x.customerName ? ' · ' + esc(x.customerName) : '')
+      + (x.recordedOffline ? ' · Dicatat offline' : '') + '</p></div>'
       + '<div class="text-right"><p class="text-body font-medium">' + rp(x.total) + '</p><p class="text-small text-muted">Laba ' + rp(x.subtotal - x.discountAmount - x.cogs) + '</p></div></button></li>').join('') + '</ul></div>';
     box.innerHTML = html;
   }
+
+  // ── Utang belum lunas ──
+  function renderDebts() {
+    const box = $('#debts-body');
+    if (!hasStore() || S.offline) { box.innerHTML = ''; return; }
+    const head = (right) => '<h3 class="section-label flex justify-between gap-3"><span>Utang belum lunas</span>' + (right ? '<span>' + right + '</span>' : '') + '</h3>';
+    if (S.debtsState === 'loading') { box.innerHTML = head('') + skeletonRows(2); return; }
+    if (S.debtsState === 'error') { box.innerHTML = head('') + errorBox('Daftar utang', 'debts'); return; }
+    const d = S.debts || { debts: [], total: 0, count: 0 };
+    if (!d.debts.length) {
+      box.innerHTML = head('') + '<ul class="list"><li class="list-row text-body text-muted">Tidak ada utang yang belum lunas.</li></ul>';
+      return;
+    }
+    box.innerHTML = head('Total ' + rp(d.total)) + '<ul class="list">' + d.debts.map((x) =>
+      '<li class="list-row"><button type="button" data-receipt="' + x.id + '" class="min-w-0 grow rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">'
+      + '<p class="text-body font-medium">' + esc(x.customerName) + '</p>'
+      + '<p class="text-small text-muted">' + esc(x.invoiceNo) + ' · ' + fmtDateTime(x.createdAt) + '</p></button>'
+      + '<span class="shrink-0 text-body font-medium">' + rp(x.total) + '</span>'
+      + '<button type="button" class="btn-secondary shrink-0" data-settle="' + x.id + '">Tandai lunas</button></li>').join('') + '</ul>';
+  }
+  function renderSettleMethods() {
+    $$('#settle-methods [data-settle-method]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.settleMethod === S.settleMethod)));
+  }
+  function openSettle(id) {
+    const x = ((S.debts && S.debts.debts) || []).find((d) => d.id === id);
+    if (!x) return;
+    S.settleId = id; S.settleMethod = 'cash'; renderSettleMethods();
+    $('#settle-who').textContent = x.customerName + ' · ' + x.invoiceNo + ' · ' + rp(x.total);
+    openDlg($('#dlg-settle'));
+  }
+  $('#form-settle').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.currentTarget.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      await api('/api/sales/' + S.settleId + '/settle', { method: 'POST', body: { method: S.settleMethod } });
+      $('#dlg-settle').close(); toast('Utang ditandai lunas'); loadDebts();
+    } catch (err) { setErr($('#dlg-settle'), err.message); }
+    finally { btn.disabled = false; }
+  });
 
   // ── Tabs ──
   function setTab(tab) {
@@ -823,6 +1199,9 @@
   $('#disc-value').addEventListener('input', (e) => { S.discValue = Math.max(0, dec(e.target.value)); cartChanged(); updateTotals(); });
   $('#tax-pct').addEventListener('input', (e) => { S.taxPct = Math.min(100, Math.max(0, dec(e.target.value))); cartChanged(); updateTotals(); });
   $('#cash-paid').addEventListener('input', (e) => { S.paid = digits(e.target.value); cartChanged(); updateTotals(); });
+  $('#debt-name').addEventListener('input', (e) => { S.customerName = e.target.value; cartChanged(); updateTotals(); });
+  $('#debt-phone').addEventListener('input', (e) => { S.customerPhone = e.target.value; cartChanged(); updateTotals(); });
+  $('#offline-view').addEventListener('click', openOutbox);
 
   // Typing in a cart line only updates numbers, so the field keeps focus.
   $('#cart-lines').addEventListener('input', (e) => {
@@ -857,8 +1236,16 @@
     else if (t.hasAttribute('data-new-store')) openNewStore();
     else if (t.hasAttribute('data-new-product')) openProduct(null);
     else if (d.receipt) showReceipt(Number(d.receipt));
+    else if (d.outboxReceipt) showLocalReceipt(d.outboxReceipt);
+    else if (d.outboxDrop) {
+      if (t.textContent !== 'Yakin hapus?') { t.textContent = 'Yakin hapus?'; return; }
+      writeOutbox(readOutbox().filter((x) => x.clientRef !== d.outboxDrop));
+      applyPending(); renderProducts(); renderOffline();
+    }
+    else if (d.settle) openSettle(Number(d.settle));
+    else if (d.settleMethod) { S.settleMethod = d.settleMethod; renderSettleMethods(); }
     else if (d.goto) goto(d.goto);
-    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: loadStores })[d.retry]();
+    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: loadStores, debts: loadDebts, online: retryOnline })[d.retry]();
   });
 
   // ── Boot ──
@@ -866,11 +1253,40 @@
   $('#report-month').value = S.reportMonth;
   renderReportPeriod();
   renderCart(); renderProducts(); renderShell();
+  // "Coba lagi" while offline: one request decides; if it reaches the server
+  // the reconnect reloads everything.
+  async function retryOnline() {
+    try { await api('/api/stores'); } catch (_) { toast('Masih offline'); }
+  }
+  window.addEventListener('offline', () => setOffline(true));
+  window.addEventListener('online', () => { retryOnline(); });
+  window.addEventListener('usernode:visibility-changed', (e) => { if (e.detail && !e.detail.hidden) sync(); });
+  // While anything waits to be sent, or the app thinks it is offline, check
+  // again every 30 seconds (the browser's online event is not always sent).
+  setInterval(() => {
+    if (readOutbox().some((x) => x.state !== 'failed')) sync();
+    else if (S.offline) api('/api/stores').catch(() => {});
+  }, 30000);
+
   (async function boot() {
     const anyStore = await loadStores();
+    registerWorker();
     if (!anyStore) { setTab('kasir'); renderBrand(); return; }
     setTab(location.hash.slice(1));
     await loadStore(); loadProducts(); loadMovements();
     if (S.tab === 'laporan') loadReport();
+    sync();
   })();
+
+  // The worker lets the app open with no connection. A frame that refuses
+  // it (some WebViews) simply cannot open offline; nothing to work around.
+  function registerWorker() {
+    try {
+      if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+      if (navigator.storage && navigator.storage.persist && !localStorage.getItem('kasirku-persist-asked')) {
+        localStorage.setItem('kasirku-persist-asked', '1');
+        navigator.storage.persist().catch(() => {});
+      }
+    } catch (_) { /* no worker: the platform shows its "needs a connection" note */ }
+  }
 })();
