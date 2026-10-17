@@ -9,7 +9,7 @@
   const rp = (n) => (n < 0 ? '-Rp ' : 'Rp ') + Math.abs(Math.round(n)).toLocaleString('id-ID');
   const digits = (v) => parseInt(String(v).replace(/\D/g, ''), 10) || 0;
   const dec = (v) => { const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
-  const METHODS = { cash: 'Tunai', qris: 'QRIS', debit: 'Debit', transfer: 'Transfer bank' };
+  const METHODS = { cash: 'Tunai', qris: 'QRIS', debit: 'Debit', transfer: 'Transfer bank', bri: 'Transfer BRI', credit: 'Bayar nanti' };
   const MOVES = { restock: 'Barang masuk', return: 'Retur', opname: 'Stok opname', sale: 'Penjualan' };
 
   const now = () => (window.usernode && usernode.now ? usernode.now() : new Date());
@@ -72,8 +72,10 @@
     tab: 'kasir', stores: [], storesState: 'loading', activeStoreId: readSavedStore(),
     store: null, products: [], productsState: 'loading', q: '', cat: 'Semua', stockQ: '',
     cart: [], discType: 'none', discValue: 0, taxPct: 11, method: 'cash', paid: 0, paying: false,
+    customerName: '', customers: [],
     checkoutRef: null, payUncertain: false,
     movements: null, movementsState: 'loading', report: null, reportState: 'loading', reportDate: today(),
+    debts: null, debtsState: 'loading', debtRef: null, debtCustomerId: null,
     reportMode: 'daily', reportMonth: today().slice(0, 7),
     receipt: null,
   };
@@ -137,7 +139,7 @@
       renderBrand();
       renderCart();
       renderOnboarding();
-    } catch (e) { S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', taxPercent: 11 }; renderBrand(); renderOnboarding(); }
+    } catch (e) { S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', taxPercent: 11, briAccountNo: '', briAccountName: '' }; renderBrand(); renderOnboarding(); }
   }
   async function loadProducts() {
     if (!hasStore()) { S.products = []; S.productsState = 'ok'; renderProducts(); return; }
@@ -164,6 +166,23 @@
     try { S.report = await api(url); S.reportState = 'ok'; } catch (e) { S.reportState = 'error'; }
     renderReport();
   }
+  // Names for the checkout datalist, so a returning customer stays one person.
+  async function loadCustomers() {
+    if (!hasStore()) { S.customers = []; fillCustomerList(); return; }
+    try { S.customers = (await api('/api/customers')).customers; } catch (e) { S.customers = []; }
+    fillCustomerList();
+  }
+  function fillCustomerList() {
+    $('#customer-list').innerHTML = S.customers.map((c) => '<option value="' + esc(c.name) + '"></option>').join('');
+  }
+  // The Piutang pelanggan list: what each customer of the active store still
+  // owes today. It does not follow the report date picker.
+  async function loadDebts() {
+    if (!hasStore()) { S.debts = null; S.debtsState = 'ok'; renderDebts(); return; }
+    S.debtsState = 'loading'; renderDebts();
+    try { S.debts = await api('/api/debts'); S.debtsState = 'ok'; } catch (e) { S.debtsState = 'error'; }
+    renderDebts();
+  }
 
   // ── Shell: the no-store gate vs the tabs ──
   function renderShell() {
@@ -187,8 +206,32 @@
     $('#tabs-lock-hint').hidden = !lock;
     if (lock) { $('#main-tabs').setAttribute('aria-describedby', 'tabs-lock-hint'); }
     else { $('#main-tabs').removeAttribute('aria-describedby'); }
+    renderGate();
     renderBrand();
     renderOnboarding();
+  }
+
+  // The gate itself has three looks: skeleton rows while the store list is
+  // still in flight, the error box when that request failed, and the Buat
+  // toko form with Langkah awal only after a successful answer that found
+  // no stores. A failed list must never read as "you have no store".
+  function renderGate() {
+    const card = $('#gate-card');
+    const status = $('#gate-status');
+    const steps = $('#gate-steps');
+    const pending = !hasStore() && S.storesState !== 'ok';
+    if (pending) {
+      card.hidden = true;
+      steps.innerHTML = ''; steps.hidden = true;
+      status.hidden = false;
+      status.innerHTML = S.storesState === 'error'
+        ? errorBox('Daftar toko', 'stores')
+        : '<div class="skeleton h-72"></div><div class="mt-5">' + skeletonRows(3) + '</div>';
+    } else {
+      status.hidden = true; status.innerHTML = '';
+      card.hidden = false;
+      steps.hidden = false;
+    }
   }
 
   // ── Shared state blocks ──
@@ -252,6 +295,9 @@
     const gateBox = $('#gate-steps');
     const kasirBox = $('#kasir-steps');
     if (!hasStore()) {
+      // While the store list is in flight or failed, renderGate shows
+      // skeletons or the error box instead of the starter steps.
+      if (S.storesState !== 'ok') { gateBox.innerHTML = ''; kasirBox.hidden = true; return; }
       gateBox.innerHTML = onboardingHtml([
         { done: false, title: 'Buat toko', hint: 'Isi nama toko di atas, lalu tekan Buat toko.' },
         { done: false, title: 'Tambah produk', hint: 'Bisa setelah toko dibuat.' },
@@ -307,10 +353,14 @@
     S.activeStoreId = id; saveStore(id);
     // A cart belongs to one store: never shop two stores in one transaction.
     S.cart = []; S.paid = 0; S.cat = 'Semua'; S.q = ''; $('#cash-paid').value = ''; $('#pos-search').value = '';
+    // A customer on a not-yet-recorded credit sale belongs to the old store too.
+    S.customerName = ''; $('#credit-name').value = '';
+    S.debts = null;
     cartChanged();
     renderShell(); $('#dlg-stores').close();
     toast('Toko aktif: ' + ((S.stores.find((s) => s.id === id) || {}).name || ''));
-    await loadStore(); loadProducts(); loadMovements(); if (S.tab === 'laporan') loadReport();
+    await loadStore(); loadProducts(); loadMovements(); loadCustomers();
+    if (S.tab === 'laporan') { loadReport(); loadDebts(); }
   }
 
   // ── Kasir ──
@@ -406,6 +456,10 @@
     if (free) return 'Isi harga satuan ' + free.name + '.';
     if (t.total > 2000000000) return 'Total transaksi terlalu besar.';
     if (S.method === 'cash' && S.paid < t.total) return 'Uang diterima masih kurang ' + rp(t.total - S.paid) + '.';
+    if (S.method === 'credit') {
+      if (!S.customerName.trim()) return 'Isi nama pelanggan dulu.';
+      if (t.total < 1) return 'Total harus lebih dari Rp 0 untuk bayar nanti.';
+    }
     return '';
   }
 
@@ -441,6 +495,9 @@
     S.cart.forEach((l) => { const el = $('[data-line-total="' + l.id + '"]'); if (el) el.textContent = rp(l.qty * l.price); });
     const cash = S.method === 'cash';
     $('#cash-box').hidden = !cash;
+    $('#bri-box').hidden = S.method !== 'bri';
+    if (S.method === 'bri') renderBri(t);
+    $('#credit-box').hidden = S.method !== 'credit';
     const change = S.paid - t.total;
     $('#t-change').textContent = rp(cash && change > 0 ? change : 0);
     const quick = [t.total, Math.ceil(t.total / 10000) * 10000, Math.ceil(t.total / 50000) * 50000, Math.ceil(t.total / 100000) * 100000];
@@ -456,7 +513,47 @@
     hint.classList.toggle('text-danger', !!blocking);
     hint.classList.toggle('text-muted', !blocking);
     $('#pay-btn').disabled = S.paying || !!problem;
-    $('#pay-btn').textContent = S.paying ? 'Memproses…' : S.payUncertain ? 'Coba bayar lagi' : 'Bayar' + (t.total ? ' ' + rp(t.total) : '');
+    const payLabel = S.method === 'credit' ? 'Catat piutang' : 'Bayar';
+    $('#pay-btn').textContent = S.paying ? 'Memproses…' : S.payUncertain ? 'Coba bayar lagi' : payLabel + (t.total ? ' ' + rp(t.total) : '');
+  }
+
+  // ── Transfer BRI: the store's account, shown while that method is chosen ──
+  const briParts = (no) => no.replace(/(\d{4})(?=\d)/g, '$1 ');
+  function renderBri(t) {
+    const s = S.store || {};
+    const box = $('#bri-details');
+    if (!s.briAccountNo || !s.briAccountName) {
+      box.innerHTML = '<div class="flex flex-col items-start gap-2 rounded-lg border border-dashed border-line p-3">'
+        + '<p class="text-body font-medium">Rekening BRI belum diisi</p>'
+        + '<p class="text-small text-muted">Isi nomor rekening dan nama pemilik di Profil toko supaya pembeli tahu ke mana harus transfer.</p>'
+        + '<button type="button" class="btn-secondary" data-bri-setup>Isi rekening BRI</button></div>';
+      return;
+    }
+    box.innerHTML = '<dl class="divide-y divide-line border-y border-line">'
+      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Bank</dt><dd class="text-body">BRI (Bank Rakyat Indonesia)</dd></div>'
+      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Nomor rekening</dt><dd class="flex items-center gap-2">'
+      + '<span class="whitespace-nowrap font-mono text-body font-medium" id="bri-no">' + esc(briParts(s.briAccountNo)) + '</span>'
+      + '<button type="button" class="btn-secondary" data-bri-copy aria-label="Salin nomor rekening BRI">Salin</button></dd></div>'
+      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Atas nama</dt><dd class="text-body">' + esc(s.briAccountName) + '</dd></div>'
+      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Jumlah transfer</dt><dd class="text-heading" id="bri-total">' + rp(t.total) + '</dd></div>'
+      + '</dl>';
+  }
+  async function copyBriNo() {
+    const no = (S.store && S.store.briAccountNo) || '';
+    if (!no) return;
+    try {
+      await navigator.clipboard.writeText(no);
+      toast('Nomor rekening BRI disalin');
+    } catch (_) {
+      // Older WebViews: fall back to a selected textarea.
+      const ta = document.createElement('textarea');
+      ta.value = no; ta.setAttribute('readonly', ''); ta.className = 'sr-only';
+      document.body.appendChild(ta); ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (_e) {}
+      ta.remove();
+      toast(ok ? 'Nomor rekening BRI disalin' : 'Nomor rekening tidak bisa disalin dari sini');
+    }
   }
 
   function newRef() {
@@ -475,17 +572,23 @@
       const { sale } = await api('/api/sales', { method: 'POST', body: {
         items: S.cart.map((l) => ({ productId: l.id, qty: l.qty, price: l.price })),
         discountType: S.discType, discountValue: S.discValue, taxPercent: S.taxPct,
-        paymentMethod: S.method, paid: S.method === 'cash' ? S.paid : t.total, clientRef: S.checkoutRef,
+        paymentMethod: S.method,
+        paid: S.method === 'cash' ? S.paid : S.method === 'credit' ? 0 : t.total,
+        customerName: S.method === 'credit' ? S.customerName.trim() : undefined,
+        clientRef: S.checkoutRef,
       } });
       cartChanged();
       S.cart = []; S.paid = 0; $('#cash-paid').value = '';
+      S.customerName = ''; $('#credit-name').value = '';
       S.discType = 'none'; S.discValue = 0; $('#disc-type').value = 'none'; $('#disc-value').value = ''; $('#disc-value').disabled = true;
       S.paying = false;
       // The first sale completes the checklist: the next render sees hasSales
       // and hides "Langkah awal" for this store for good.
       if (S.store) S.store.hasSales = true;
       renderCart(); loadProducts(); loadMovements();
+      loadCustomers();
       if (S.report) loadReport();
+      if (S.debts) loadDebts();
       toast('Transaksi ' + sale.invoiceNo + ' berhasil');
       showReceipt(sale.id);
     } catch (e) {
@@ -627,6 +730,7 @@
     const s = S.store || {};
     $('#s-name').value = s.name || ''; $('#s-address').value = s.address || ''; $('#s-phone').value = s.phone || '';
     $('#s-tax').value = s.taxPercent != null ? s.taxPercent : 11; logoDraft = s.logoUrl || '';
+    $('#s-bri-no').value = s.briAccountNo ? briParts(s.briAccountNo) : ''; $('#s-bri-name').value = s.briAccountName || '';
     renderLogoDraft(); openDlg($('#dlg-store'));
   }
   $('#open-store').addEventListener('click', openStoreProfile);
@@ -646,7 +750,8 @@
     const name = $('#s-name').value.trim();
     if (!name) return setErr($('#dlg-store'), 'Nama toko wajib diisi.');
     try {
-      const saved = await api('/api/store', { method: 'PUT', body: { name, address: $('#s-address').value.trim(), phone: $('#s-phone').value.trim(), logoUrl: logoDraft, taxPercent: dec($('#s-tax').value) } });
+      const saved = await api('/api/store', { method: 'PUT', body: { name, address: $('#s-address').value.trim(), phone: $('#s-phone').value.trim(), logoUrl: logoDraft, taxPercent: dec($('#s-tax').value),
+        briAccountNo: $('#s-bri-no').value.trim(), briAccountName: $('#s-bri-name').value.trim() } });
       // The PUT response carries no hasSales; keep the loaded one so the
       // checklist state survives editing the profile.
       S.store = Object.assign({}, S.store, saved);
@@ -669,9 +774,12 @@
     S.stores.push(created);
     S.activeStoreId = created.id; saveStore(created.id);
     S.cart = []; S.cat = 'Semua'; S.q = ''; cartChanged();
+    S.customerName = ''; $('#credit-name').value = '';
+    S.debts = null;
     renderShell();
     toast('Toko ' + created.name + ' dibuat');
-    await loadStore(); loadProducts(); loadMovements();
+    await loadStore(); loadProducts(); loadMovements(); loadCustomers();
+    if (S.tab === 'laporan') loadDebts();
   }
   $('#form-new-store').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -719,7 +827,9 @@
       + (x.discountAmount ? row('Diskon' + (x.discountType === 'percent' ? ' (' + x.discountValue + '%)' : ''), '-' + rp(x.discountAmount)) : '')
       + row('PPN (' + x.taxPercent + '%)', rp(x.taxAmount)) + row('TOTAL', rp(x.total), true) + rule
       + row('Pembayaran', METHODS[x.paymentMethod])
-      + (x.paymentMethod === 'cash' ? row('Tunai', rp(x.paid)) + row('Kembalian', rp(x.change)) : row('Dibayar', rp(x.paid))) + rule
+      + (x.paymentMethod === 'credit'
+        ? row('Pelanggan', esc(x.customerName || '')) + row('Belum dibayar', rp(x.total))
+        : x.paymentMethod === 'cash' ? row('Tunai', rp(x.paid)) + row('Kembalian', rp(x.change)) : row('Dibayar', rp(x.paid))) + rule
       + '<p class="text-center">Terima kasih telah berbelanja</p><p class="text-center text-muted">Struk dibuat dengan KasirKU</p></div>';
   }
   async function showReceipt(id) {
@@ -734,7 +844,11 @@
     return [s.name || 'KasirKU', s.address, s.phone, '', 'Invoice: ' + x.invoiceNo, 'Tanggal: ' + fmtDateTime(x.createdAt), '']
       .concat(r.items.map((i) => i.name + ' ' + i.qty + ' x ' + rp(i.price) + ' = ' + rp(i.qty * i.price)))
       .concat(['', 'Subtotal: ' + rp(x.subtotal), x.discountAmount ? 'Diskon: -' + rp(x.discountAmount) : '', 'PPN (' + x.taxPercent + '%): ' + rp(x.taxAmount),
-        'TOTAL: ' + rp(x.total), 'Pembayaran: ' + METHODS[x.paymentMethod], x.paymentMethod === 'cash' ? 'Tunai: ' + rp(x.paid) + ', kembalian: ' + rp(x.change) : '', '', 'Terima kasih telah berbelanja'])
+        'TOTAL: ' + rp(x.total), 'Pembayaran: ' + METHODS[x.paymentMethod],
+        x.paymentMethod === 'cash' ? 'Tunai: ' + rp(x.paid) + ', kembalian: ' + rp(x.change)
+          : x.paymentMethod === 'credit' ? 'Pelanggan: ' + (x.customerName || '') : 'Dibayar: ' + rp(x.paid),
+        x.paymentMethod === 'credit' ? 'Belum dibayar: ' + rp(x.total) : '',
+        '', 'Terima kasih telah berbelanja'])
       .filter((l) => l !== undefined && l !== null && (l !== '' || true)).join('\n').replace(/\n{3,}/g, '\n\n');
   }
   $('#receipt-print').addEventListener('click', () => {
@@ -783,9 +897,56 @@
       '<li class="list-row"><span class="grow text-body">' + METHODS[x.method] + '</span><span class="text-small text-muted">' + x.count + ' transaksi</span><span class="w-32 text-right text-body font-medium">' + rp(x.total) + '</span></li>').join('') + '</ul></div>';
     html += '<div><h3 class="section-label">Riwayat transaksi</h3><ul class="list">' + r.sales.map((x) =>
       '<li><button type="button" data-receipt="' + x.id + '" class="list-row w-full text-left hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">'
-      + '<div class="min-w-0 grow"><p class="text-body font-medium">' + esc(x.invoiceNo) + '</p><p class="text-small text-muted">' + rowTime(x) + ' · ' + METHODS[x.paymentMethod] + '</p></div>'
+      + '<div class="min-w-0 grow"><p class="text-body font-medium">' + esc(x.invoiceNo) + '</p><p class="text-small text-muted">' + rowTime(x) + ' · ' + METHODS[x.paymentMethod] + (x.customerName ? ' · ' + esc(x.customerName) : '') + '</p></div>'
       + '<div class="text-right"><p class="text-body font-medium">' + rp(x.total) + '</p><p class="text-small text-muted">Laba ' + rp(x.subtotal - x.discountAmount - x.cogs) + '</p></div></button></li>').join('') + '</ul></div>';
     box.innerHTML = html;
+  }
+
+  // ── Piutang pelanggan ──
+  function renderDebts() {
+    const box = $('#debt-body');
+    if (S.debtsState === 'loading') { box.innerHTML = skeletonRows(2); return; }
+    if (S.debtsState === 'error') { box.innerHTML = errorBox('Daftar piutang', 'debts'); return; }
+    if (!S.debts || !S.debts.debts.length) {
+      box.innerHTML = '<div class="state-empty rounded-xl border border-line bg-surface"><p class="text-heading">Tidak ada piutang</p>'
+        + '<p class="text-body text-muted">Penjualan Bayar nanti dari menu Kasir akan muncul di sini.</p></div>';
+      return;
+    }
+    const d = S.debts;
+    box.innerHTML = '<div><h3 class="section-label flex justify-between"><span>Piutang pelanggan</span>'
+      + '<span>Total ' + rp(d.total) + ' dari ' + d.count + ' pelanggan</span></h3><ul class="list">'
+      + d.debts.map((x) =>
+        '<li class="list-row"><div class="min-w-0 grow"><p class="text-body font-medium">' + esc(x.name) + '</p>'
+        + '<p class="text-small text-muted">Bon terakhir ' + fmtDateTime(x.lastSaleAt) + '</p></div>'
+        + '<p class="shrink-0 text-body font-medium">' + rp(x.owed) + '</p>'
+        + '<button type="button" class="btn-secondary shrink-0" data-pay-debt="' + x.customerId
+        + '" aria-label="Catat bayar piutang ' + esc(x.name) + '">Catat bayar</button></li>').join('')
+      + '</ul></div>';
+  }
+
+  function openDebtPay(customerId) {
+    const d = S.debts && S.debts.debts.find((x) => x.customerId === customerId);
+    if (!d) return;
+    S.debtCustomerId = customerId;
+    // A fresh reference per open: a retried submit reuses it, a reopened
+    // window starts a new payment.
+    S.debtRef = newRef();
+    $('#dp-customer').textContent = d.name + ', sisa ' + rp(d.owed);
+    $('#dp-amount').value = '';
+    const full = $('#dp-full');
+    full.textContent = 'Lunasi ' + rp(d.owed);
+    full.dataset.owed = String(d.owed);
+    debtPreview();
+    openDlg($('#dlg-debt-pay'));
+  }
+  function debtPreview() {
+    const d = S.debts && S.debts.debts.find((x) => x.customerId === S.debtCustomerId);
+    if (!d) return;
+    if ($('#dp-amount').value.trim() === '') { $('#dp-preview').textContent = 'Sisa piutang ' + rp(d.owed) + '.'; return; }
+    const a = digits($('#dp-amount').value);
+    $('#dp-preview').textContent = a > d.owed
+      ? 'Melebihi sisa piutang ' + rp(d.owed) + '.'
+      : 'Sisa piutang menjadi ' + rp(d.owed - a) + '.';
   }
 
   // ── Tabs ──
@@ -796,7 +957,7 @@
     $$('[role=tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
     ['kasir', 'stok', 'laporan'].forEach((t) => { $('#tab-' + t).hidden = t !== tab; });
     if (tab === 'stok' && S.movementsState !== 'ok') loadMovements();
-    if (tab === 'laporan') loadReport();
+    if (tab === 'laporan') { loadReport(); loadDebts(); }
   }
   const goto = (t) => { location.hash = t; };
   window.addEventListener('hashchange', () => setTab(location.hash.slice(1)));
@@ -827,6 +988,32 @@
   $('#disc-value').addEventListener('input', (e) => { S.discValue = Math.max(0, dec(e.target.value)); cartChanged(); updateTotals(); });
   $('#tax-pct').addEventListener('input', (e) => { S.taxPct = Math.min(100, Math.max(0, dec(e.target.value))); cartChanged(); updateTotals(); });
   $('#cash-paid').addEventListener('input', (e) => { S.paid = digits(e.target.value); cartChanged(); updateTotals(); });
+  $('#credit-name').addEventListener('input', (e) => { S.customerName = e.target.value; cartChanged(); updateTotals(); });
+  $('#dp-amount').addEventListener('input', debtPreview);
+  $('#dp-full').addEventListener('click', () => {
+    const d = S.debts && S.debts.debts.find((x) => x.customerId === S.debtCustomerId);
+    if (!d) return;
+    $('#dp-amount').value = String(d.owed);
+    debtPreview();
+  });
+  $('#form-debt-pay').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const d = S.debts && S.debts.debts.find((x) => x.customerId === S.debtCustomerId);
+    if (!d) return;
+    if ($('#dp-amount').value.trim() === '') return setErr($('#dlg-debt-pay'), 'Isi jumlahnya dulu.');
+    const amount = digits($('#dp-amount').value);
+    if (amount < 1) return setErr($('#dlg-debt-pay'), 'Jumlah dibayar tidak valid.');
+    const btn = $('#form-debt-pay button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const out = await api('/api/debts/' + S.debtCustomerId + '/payments', {
+        method: 'POST', body: { amount, clientRef: S.debtRef } });
+      $('#dlg-debt-pay').close();
+      toast(out.owed === 0 ? 'Piutang ' + d.name + ' lunas' : 'Pembayaran dicatat');
+      loadDebts();
+    } catch (err) { setErr($('#dlg-debt-pay'), err.message); }
+    finally { btn.disabled = false; }
+  });
 
   // Typing in a cart line only updates numbers, so the field keeps focus.
   $('#cart-lines').addEventListener('input', (e) => {
@@ -861,20 +1048,31 @@
     else if (t.hasAttribute('data-new-store')) openNewStore();
     else if (t.hasAttribute('data-new-product')) openProduct(null);
     else if (d.receipt) showReceipt(Number(d.receipt));
+    else if (d.payDebt) openDebtPay(Number(d.payDebt));
     else if (d.goto) goto(d.goto);
-    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: loadStores })[d.retry]();
+    else if (t.hasAttribute('data-bri-copy')) copyBriNo();
+    else if (t.hasAttribute('data-bri-setup')) { openStoreProfile(); $('#s-bri-no').focus(); }
+    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: retryStores, debts: loadDebts })[d.retry]();
   });
 
   // ── Boot ──
+  // Everything after the store list answers: the active store's profile,
+  // then its products, movements, customers and, on Laporan, the reports.
+  // Shared by boot and by the gate's Coba lagi, which may find stores.
+  async function afterStores() {
+    setTab(location.hash.slice(1));
+    await loadStore(); loadProducts(); loadMovements(); loadCustomers();
+    if (S.tab === 'laporan') { loadReport(); loadDebts(); }
+  }
+  async function retryStores() {
+    if (await loadStores()) await afterStores();
+  }
   $('#report-date').value = S.reportDate;
   $('#report-month').value = S.reportMonth;
   renderReportPeriod();
   renderCart(); renderProducts(); renderShell();
   (async function boot() {
-    const anyStore = await loadStores();
-    if (!anyStore) { setTab('kasir'); renderBrand(); return; }
-    setTab(location.hash.slice(1));
-    await loadStore(); loadProducts(); loadMovements();
-    if (S.tab === 'laporan') loadReport();
+    if (!(await loadStores())) { setTab('kasir'); renderBrand(); return; }
+    await afterStores();
   })();
 })();
