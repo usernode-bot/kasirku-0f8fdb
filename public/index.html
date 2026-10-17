@@ -201,7 +201,8 @@
             <button type="button" data-method="cash" class="seg">Tunai</button>
             <button type="button" data-method="qris" class="seg">QRIS</button>
             <button type="button" data-method="debit" class="seg">Debit</button>
-            <button type="button" data-method="transfer" class="seg">Transfer BRI</button>
+            <button type="button" data-method="transfer" class="seg">Transfer bank</button>
+            <button type="button" data-method="bri" class="seg">Transfer BRI</button>
             <button type="button" data-method="credit" class="seg col-span-2">Bayar nanti</button>
           </div>
         </fieldset>
@@ -213,11 +214,9 @@
           <div class="flex justify-between text-body"><span class="text-muted">Uang kembalian</span><strong id="t-change">Rp 0</strong></div>
         </div>
 
-        <div id="transfer-box" class="flex flex-col gap-2" hidden>
-          <span id="transfer-acct-label" class="section-label mb-0 block" hidden>Rekening BRI toko</span>
-          <p id="transfer-acct" class="font-mono text-heading" hidden></p>
-          <p id="transfer-note" class="text-small text-muted"></p>
-          <p id="transfer-missing" class="text-small text-muted" hidden></p>
+        <div id="bri-box" class="flex flex-col gap-2" hidden>
+          <p class="section-label mb-0">Transfer ke rekening BRI</p>
+          <div id="bri-details"></div>
         </div>
 
         <div id="credit-box" class="flex flex-col gap-2" hidden>
@@ -343,11 +342,6 @@
         <div class="w-28 shrink-0"><label for="s-tax" class="section-label mb-1 block">PPN bawaan (%)</label><input id="s-tax" class="field" inputmode="decimal" placeholder="e.g. 11"></div>
       </div>
       <div>
-        <label for="s-bri" class="section-label mb-1 block">No. rekening BRI</label>
-        <input id="s-bri" class="field" maxlength="30" inputmode="numeric" autocomplete="off" placeholder="e.g. 0123-01-012345-50-1">
-        <p class="mt-1 text-small text-muted">Tampil di kasir saat pelanggan memilih Transfer BRI. Kosongkan jika tidak dipakai.</p>
-      </div>
-      <div>
         <span class="section-label mb-1 block">Logo di struk</span>
         <div class="flex items-center gap-3">
           <span id="s-logo-preview" class="shrink-0"></span>
@@ -356,6 +350,14 @@
           <button type="button" id="s-logo-remove" class="btn-secondary" hidden>Hapus logo</button>
         </div>
         <p class="mt-1 text-small text-muted">Tanpa logo unggahan, struk memakai logo KasirKU.</p>
+      </div>
+      <div class="flex flex-col gap-3 border-t border-line pt-3">
+        <div>
+          <p class="text-body font-medium">Rekening BRI</p>
+          <p class="text-small text-muted">Ditampilkan di kasir saat pembeli memilih Transfer BRI.</p>
+        </div>
+        <div><label for="s-bri-no" class="section-label mb-1 block">Nomor rekening BRI</label><input id="s-bri-no" class="field" maxlength="40" inputmode="numeric" autocomplete="off" placeholder="e.g. 0123 0100 0456 307"></div>
+        <div><label for="s-bri-name" class="section-label mb-1 block">Nama pemilik rekening</label><input id="s-bri-name" class="field" maxlength="80" autocomplete="off" placeholder="e.g. Budi Santoso"></div>
       </div>
     </div>
     <div class="flex shrink-0 flex-col gap-2 border-t border-line px-4 py-3">

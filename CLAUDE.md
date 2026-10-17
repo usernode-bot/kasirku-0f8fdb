@@ -142,3 +142,4 @@ Re-theme by changing the token values there, keeping every text pair at
 - Stock changes only through `/api/products/:id/adjust` and `/api/sales` (every change writes `stock_movements`); editing a product never changes stock.
 - `sales` and `sale_items` are `staging:private` (financial records); staging seeds fake `DEMO-` products and sales.
 - Reports use the Asia/Jakarta day.
+- Payment methods: `cash`, `qris`, `debit`, `transfer` (any bank) and `bri` ("Transfer BRI"). The BRI account shown at checkout is per store (`stores.bri_account_no` digits only, `stores.bri_account_name`), edited in Profil toko; both are set or both empty, and checkout shows a prompt to fill them in when they are empty.
