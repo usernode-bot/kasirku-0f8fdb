@@ -661,13 +661,13 @@
   }
   // Shared by the "Tambah toko" dialog and the gate card's inline form:
   // everything that happens once POST /api/stores has answered.
-  async function afterStoreCreated(created) {
+  async function afterStoreCreated(created, msg) {
     S.stores.push(created);
     S.activeStoreId = created.id; saveStore(created.id);
     S.cart = []; S.cat = 'Semua'; S.q = ''; cartChanged();
     renderShell();
-    toast('Toko ' + created.name + ' dibuat');
-    await loadStore(); loadProducts(); loadMovements();
+    toast(msg || ('Toko ' + created.name + ' dibuat'));
+    await loadStore(); loadProducts(); loadMovements(); if (S.tab === 'laporan') loadReport();
   }
   $('#form-new-store').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -694,6 +694,19 @@
       $('#g-name').value = '';
       await afterStoreCreated(created);
     } catch (err) { setErr(form, err.message); }
+    finally { btn.disabled = false; }
+  });
+  // "Coba dengan data contoh" under the gate form: opens a ready-made example
+  // store so a brand-new owner can look around before naming their own.
+  $('#gate-sample').addEventListener('click', async () => {
+    const box = $('#gate-sample-box');
+    const btn = $('#gate-sample');
+    btn.disabled = true;
+    setErr(box, '');
+    try {
+      const created = await api('/api/stores/sample', { method: 'POST', body: {} });
+      await afterStoreCreated(created, 'Toko Contoh dibuat dengan data contoh');
+    } catch (err) { setErr(box, err.message); }
     finally { btn.disabled = false; }
   });
 
