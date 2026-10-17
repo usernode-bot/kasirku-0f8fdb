@@ -9,7 +9,7 @@
   const rp = (n) => (n < 0 ? '-Rp ' : 'Rp ') + Math.abs(Math.round(n)).toLocaleString('id-ID');
   const digits = (v) => parseInt(String(v).replace(/\D/g, ''), 10) || 0;
   const dec = (v) => { const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
-  const METHODS = { cash: 'Tunai', qris: 'QRIS', debit: 'Debit', transfer: 'Transfer bank', credit: 'Bayar nanti' };
+  const METHODS = { cash: 'Tunai', qris: 'QRIS', debit: 'Debit', transfer: 'Transfer BRI', credit: 'Bayar nanti' };
   const MOVES = { restock: 'Barang masuk', return: 'Retur', opname: 'Stok opname', sale: 'Penjualan' };
 
   const now = () => (window.usernode && usernode.now ? usernode.now() : new Date());
@@ -139,7 +139,7 @@
       renderBrand();
       renderCart();
       renderOnboarding();
-    } catch (e) { S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', taxPercent: 11 }; renderBrand(); renderOnboarding(); }
+    } catch (e) { S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', taxPercent: 11, briAccount: '' }; renderBrand(); renderOnboarding(); }
   }
   async function loadProducts() {
     if (!hasStore()) { S.products = []; S.productsState = 'ok'; renderProducts(); return; }
@@ -491,6 +491,20 @@
     S.cart.forEach((l) => { const el = $('[data-line-total="' + l.id + '"]'); if (el) el.textContent = rp(l.qty * l.price); });
     const cash = S.method === 'cash';
     $('#cash-box').hidden = !cash;
+    const transfer = S.method === 'transfer';
+    const tbox = $('#transfer-box');
+    tbox.hidden = !transfer;
+    if (transfer) {
+      const acct = (S.store && S.store.briAccount) || '';
+      const hasAcct = !!acct;
+      $('#transfer-acct-label').hidden = !hasAcct;
+      $('#transfer-acct').hidden = !hasAcct;
+      $('#transfer-acct').textContent = acct;
+      $('#transfer-note').textContent = 'Minta pelanggan mentransfer ' + rp(t.total) + ' ke rekening BRI '
+        + (hasAcct ? 'ini' : 'toko') + '. Ketuk Bayar setelah dana masuk.';
+      $('#transfer-missing').hidden = hasAcct;
+      $('#transfer-missing').textContent = 'No. rekening BRI belum diisi. Isi di Profil toko agar nomornya tampil di sini.';
+    }
     $('#credit-box').hidden = S.method !== 'credit';
     const change = S.paid - t.total;
     $('#t-change').textContent = rp(cash && change > 0 ? change : 0);
@@ -685,6 +699,7 @@
     const s = S.store || {};
     $('#s-name').value = s.name || ''; $('#s-address').value = s.address || ''; $('#s-phone').value = s.phone || '';
     $('#s-tax').value = s.taxPercent != null ? s.taxPercent : 11; logoDraft = s.logoUrl || '';
+    $('#s-bri').value = s.briAccount || '';
     renderLogoDraft(); openDlg($('#dlg-store'));
   }
   $('#open-store').addEventListener('click', openStoreProfile);
@@ -704,7 +719,7 @@
     const name = $('#s-name').value.trim();
     if (!name) return setErr($('#dlg-store'), 'Nama toko wajib diisi.');
     try {
-      const saved = await api('/api/store', { method: 'PUT', body: { name, address: $('#s-address').value.trim(), phone: $('#s-phone').value.trim(), logoUrl: logoDraft, taxPercent: dec($('#s-tax').value) } });
+      const saved = await api('/api/store', { method: 'PUT', body: { name, address: $('#s-address').value.trim(), phone: $('#s-phone').value.trim(), logoUrl: logoDraft, taxPercent: dec($('#s-tax').value), briAccount: $('#s-bri').value.trim() } });
       // The PUT response carries no hasSales; keep the loaded one so the
       // checklist state survives editing the profile.
       S.store = Object.assign({}, S.store, saved);

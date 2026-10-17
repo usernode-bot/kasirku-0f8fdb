@@ -201,7 +201,7 @@
             <button type="button" data-method="cash" class="seg">Tunai</button>
             <button type="button" data-method="qris" class="seg">QRIS</button>
             <button type="button" data-method="debit" class="seg">Debit</button>
-            <button type="button" data-method="transfer" class="seg">Transfer bank</button>
+            <button type="button" data-method="transfer" class="seg">Transfer BRI</button>
             <button type="button" data-method="credit" class="seg col-span-2">Bayar nanti</button>
           </div>
         </fieldset>
@@ -211,6 +211,13 @@
           <input id="cash-paid" class="field" inputmode="numeric" placeholder="e.g. 100000" autocomplete="off">
           <div id="cash-quick" class="flex flex-wrap gap-2"></div>
           <div class="flex justify-between text-body"><span class="text-muted">Uang kembalian</span><strong id="t-change">Rp 0</strong></div>
+        </div>
+
+        <div id="transfer-box" class="flex flex-col gap-2" hidden>
+          <span id="transfer-acct-label" class="section-label mb-0 block" hidden>Rekening BRI toko</span>
+          <p id="transfer-acct" class="font-mono text-heading" hidden></p>
+          <p id="transfer-note" class="text-small text-muted"></p>
+          <p id="transfer-missing" class="text-small text-muted" hidden></p>
         </div>
 
         <div id="credit-box" class="flex flex-col gap-2" hidden>
@@ -334,6 +341,11 @@
       <div class="flex gap-3">
         <div class="min-w-0 flex-1"><label for="s-phone" class="section-label mb-1 block">Nomor telepon</label><input id="s-phone" class="field" maxlength="40" inputmode="tel" placeholder="e.g. 0812-3456-7890"></div>
         <div class="w-28 shrink-0"><label for="s-tax" class="section-label mb-1 block">PPN bawaan (%)</label><input id="s-tax" class="field" inputmode="decimal" placeholder="e.g. 11"></div>
+      </div>
+      <div>
+        <label for="s-bri" class="section-label mb-1 block">No. rekening BRI</label>
+        <input id="s-bri" class="field" maxlength="30" inputmode="numeric" autocomplete="off" placeholder="e.g. 0123-01-012345-50-1">
+        <p class="mt-1 text-small text-muted">Tampil di kasir saat pelanggan memilih Transfer BRI. Kosongkan jika tidak dipakai.</p>
       </div>
       <div>
         <span class="section-label mb-1 block">Logo di struk</span>
