@@ -123,16 +123,16 @@
       <button type="button" id="open-store" class="btn-secondary shrink-0 whitespace-nowrap" hidden>Profil toko</button>
     </div>
     <nav id="main-tabs" class="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4" role="tablist" aria-label="Menu utama">
-      <button type="button" role="tab" data-tab="kasir" class="tab"><svg viewBox="0 0 20 20" class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 3h7v4H5z M3 9h14l-1 8H4z M7 12h1 M10 12h1 M13 12h1"/></svg>Kasir<span class="hidden sm:inline"> / Penjualan</span></button>
+      <button type="button" role="tab" data-tab="kasir" class="tab"><svg viewBox="0 0 20 20" class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 3h7v4H5z M3 9h14l-1 8H4z M7 12h1 M10 12h1 M13 12h1"/></svg><span>Kasir<span class="hidden sm:inline"> / Penjualan</span></span></button>
       <button type="button" role="tab" data-tab="stok" class="tab"><svg viewBox="0 0 20 20" class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 2l7 4v8l-7 4-7-4V6z M3 6l7 4 7-4 M10 10v8"/></svg>Stok</button>
-      <button type="button" role="tab" data-tab="laporan" class="tab"><svg viewBox="0 0 20 20" class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 17h14 M6 14V9 M10 14V5 M14 14v-3"/></svg>Laporan<span class="hidden sm:inline"> Penjualan</span></button>
+      <button type="button" role="tab" data-tab="laporan" class="tab"><svg viewBox="0 0 20 20" class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 17h14 M6 14V9 M10 14V5 M14 14v-3"/></svg><span>Laporan<span class="hidden sm:inline"> Penjualan</span></span></button>
     </nav>
   </header>
   <p id="staging-note" hidden class="border-b border-line bg-raised px-4 py-2 text-center text-small text-muted">Staging demo: data toko contoh, bukan toko sungguhan.</p>
 
   <!-- Belum ada toko: shown instead of the tabs when the account owns no store. -->
   <section id="store-gate" class="mx-auto max-w-7xl px-4 py-5" hidden>
-    <div class="state-empty mx-auto w-full max-w-lg gap-3 rounded-xl border border-line bg-surface px-6 py-6">
+    <div id="gate-card" class="state-empty mx-auto w-full max-w-lg gap-3 rounded-xl border border-line bg-surface px-6 py-6">
       <p class="text-title">Belum ada toko</p>
       <p class="text-body text-muted">Cukup 1 menit: isi nama toko, lalu mulai mencatat penjualan, stok dan laporan.</p>
       <form id="form-gate-store" class="flex w-full flex-col gap-2 text-left" novalidate>
@@ -142,6 +142,9 @@
         <button type="submit" class="btn-primary w-full">Buat toko</button>
       </form>
     </div>
+    <!-- Holds the gate's own loading skeleton or error box: the Buat toko
+         form shows only after the store list answered and found none. -->
+    <div id="gate-status" class="mx-auto mt-5 max-w-lg" hidden></div>
     <div id="gate-steps" class="mx-auto mt-5 max-w-lg"></div>
   </section>
 
@@ -199,7 +202,8 @@
             <button type="button" data-method="qris" class="seg">QRIS</button>
             <button type="button" data-method="debit" class="seg">Debit</button>
             <button type="button" data-method="transfer" class="seg">Transfer bank</button>
-            <button type="button" data-method="bri" class="seg col-span-2">Transfer BRI</button>
+            <button type="button" data-method="bri" class="seg">Transfer BRI</button>
+            <button type="button" data-method="credit" class="seg col-span-2">Bayar nanti</button>
           </div>
         </fieldset>
 
@@ -213,6 +217,13 @@
         <div id="bri-box" class="flex flex-col gap-2" hidden>
           <p class="section-label mb-0">Transfer ke rekening BRI</p>
           <div id="bri-details"></div>
+        </div>
+
+        <div id="credit-box" class="flex flex-col gap-2" hidden>
+          <label for="credit-name" class="section-label mb-0 block">Nama pelanggan</label>
+          <input id="credit-name" class="field" list="customer-list" maxlength="80" placeholder="e.g. Pak Budi" autocomplete="off">
+          <datalist id="customer-list"></datalist>
+          <p class="text-small text-muted">Total belanja dicatat sebagai piutang pelanggan ini. Catat pembayarannya nanti di Laporan.</p>
         </div>
 
         <p id="pay-hint" class="text-small text-muted" aria-live="polite"></p>
@@ -243,11 +254,23 @@
       <div class="flex flex-wrap items-end gap-3">
         <h2 class="text-heading grow">Laporan Penjualan</h2>
         <div>
+          <p class="section-label" id="report-mode-label">Periode</p>
+          <div id="report-mode" role="group" aria-labelledby="report-mode-label" class="flex gap-2">
+            <button type="button" class="seg" data-mode="daily" aria-pressed="true">Harian</button>
+            <button type="button" class="seg" data-mode="monthly" aria-pressed="false">Bulanan</button>
+          </div>
+        </div>
+        <div id="report-date-wrap">
           <label for="report-date" class="section-label block">Tanggal</label>
           <input id="report-date" type="date" class="field">
         </div>
+        <div id="report-month-wrap" hidden>
+          <label for="report-month" class="section-label block">Bulan</label>
+          <input id="report-month" type="month" class="field">
+        </div>
       </div>
       <div id="report-body"></div>
+      <div id="debt-body"></div>
     </section>
   </main>
 </div>
@@ -374,6 +397,26 @@
     <div class="flex justify-end gap-2">
       <button type="button" data-close class="btn-secondary">Batal</button>
       <button type="submit" class="btn-primary">Simpan toko</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-debt-pay" class="dlg">
+  <form id="form-debt-pay" class="flex flex-col gap-3 p-5" novalidate>
+    <div>
+      <h2 class="text-heading">Catat pembayaran piutang</h2>
+      <p id="dp-customer" class="text-small text-muted"></p>
+    </div>
+    <div>
+      <label for="dp-amount" class="section-label block">Jumlah dibayar (Rp)</label>
+      <input id="dp-amount" class="field" inputmode="numeric" placeholder="e.g. 20000">
+    </div>
+    <div><button type="button" id="dp-full" class="btn-secondary">Lunasi</button></div>
+    <p id="dp-preview" class="text-small text-muted" aria-live="polite"></p>
+    <p data-err role="alert" class="text-small text-danger"></p>
+    <div class="flex justify-end gap-2">
+      <button type="button" data-close class="btn-secondary">Batal</button>
+      <button type="submit" class="btn-primary">Simpan pembayaran</button>
     </div>
   </form>
 </dialog>

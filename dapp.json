@@ -45,6 +45,17 @@
       "name": "Report tab without a store shows the first-store screen",
       "path": "/#laporan",
       "expectText": "Belum ada toko"
+    },
+    {
+      "id": "kasir.credit-method",
+      "name": "Kasir offers Bayar nanti",
+      "path": "/",
+      "expectSelector": "#pay-methods [data-method=\"credit\"]",
+      "impact": [
+        "public/**",
+        "api.js",
+        "styles/**"
+      ]
     }
   ]
 }
