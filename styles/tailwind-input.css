@@ -46,7 +46,7 @@
     --surface: 28 25 23;
     --raised: 41 37 36;
     --fg: 245 245 244;
-    --muted: 168 162 158;
+    --muted: 190 185 180;
     --line: 68 64 60;
     --accent: 45 212 191;
     --on-accent: 4 47 46;
@@ -135,7 +135,15 @@
   .tab {
     @apply inline-flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-3 text-body font-medium text-muted
       hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus aria-selected:border-accent aria-selected:text-fg
-      disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-muted;
+      disabled:cursor-not-allowed disabled:hover:text-muted;
+  }
+  /* A locked tab (no store yet) looks like an unselected tab: full muted
+     text and no underline, so it never reads as the open tab. The padlock
+     and the hint line below are what mark it as locked. This has to come
+     after .tab: Tailwind emits the aria-* variants after the disabled one,
+     so a disabled: class inside .tab would lose to aria-selected. */
+  .tab:disabled {
+    @apply border-transparent text-muted;
   }
   /* A choice among a few: payment method, category. */
   .seg {
