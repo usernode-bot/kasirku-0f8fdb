@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240" role="img" aria-label="Contoh QRIS staging, bukan kode pembayaran">
+  <rect width="240" height="240" rx="12" fill="#ffffff"/>
+  <rect x="12" y="12" width="216" height="216" rx="8" fill="none" stroke="#0f766e" stroke-width="2" stroke-dasharray="6 6"/>
+  <g fill="#1c1917">
+    <rect x="36" y="36" width="44" height="44" rx="6"/>
+    <rect x="160" y="36" width="44" height="44" rx="6"/>
+    <rect x="36" y="160" width="44" height="44" rx="6"/>
+    <rect x="44" y="44" width="28" height="28" fill="#ffffff"/>
+    <rect x="168" y="44" width="28" height="28" fill="#ffffff"/>
+    <rect x="44" y="168" width="28" height="28" fill="#ffffff"/>
+    <rect x="52" y="52" width="12" height="12"/>
+    <rect x="176" y="52" width="12" height="12"/>
+    <rect x="52" y="176" width="12" height="12"/>
+    <rect x="100" y="36" width="12" height="12"/>
+    <rect x="124" y="48" width="12" height="12"/>
+    <rect x="100" y="68" width="12" height="12"/>
+    <rect x="36" y="100" width="12" height="12"/>
+    <rect x="60" y="112" width="12" height="12"/>
+    <rect x="88" y="100" width="12" height="12"/>
+    <rect x="112" y="112" width="12" height="12"/>
+    <rect x="136" y="100" width="12" height="12"/>
+    <rect x="164" y="112" width="12" height="12"/>
+    <rect x="192" y="100" width="12" height="12"/>
+    <rect x="100" y="160" width="12" height="12"/>
+    <rect x="124" y="172" width="12" height="12"/>
+    <rect x="148" y="160" width="12" height="12"/>
+    <rect x="176" y="172" width="12" height="12"/>
+    <rect x="200" y="160" width="12" height="12"/>
+  </g>
+  <rect x="24" y="106" width="192" height="28" fill="#ffffff"/>
+  <text x="120" y="118" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="12" font-weight="600" fill="#57534e">Contoh QRIS staging,</text>
+  <text x="120" y="130" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="12" fill="#57534e">bukan kode pembayaran</text>
+</svg>

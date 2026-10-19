@@ -68,6 +68,16 @@
       ]
     },
     {
+      "id": "kasir.transfer-method",
+      "name": "Kasir offers Transfer bank",
+      "path": "/",
+      "expectSelector": "#pay-methods [data-method=\"transfer\"]",
+      "impact": [
+        "public/**",
+        "api.js"
+      ]
+    },
+    {
       "id": "insights.empty",
       "name": "Insights answer honestly for a visitor without a store",
       "path": "/api/insights",
