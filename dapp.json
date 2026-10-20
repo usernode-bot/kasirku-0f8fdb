@@ -5,6 +5,7 @@
     "emoji": "🧾"
   },
   "secrets": [],
+  "permissions": [{ "capability": "camera", "reason": "Memindai barcode produk di Kasir" }],
   "visibility": {
     "build": "public",
     "view": "public"
@@ -72,6 +73,16 @@
       "name": "Kasir has a product search box above the product list",
       "path": "/",
       "expectSelector": "#pos-search"
+    },
+    {
+      "id": "kasir.scan",
+      "name": "Kasir has the barcode scan control",
+      "path": "/",
+      "expectSelector": "#dlg-scan",
+      "impact": [
+        "public/**",
+        "styles/**"
+      ]
     },
     {
       "id": "insights.empty",
