@@ -427,7 +427,7 @@
       if (line.qty >= p.stock) return toast('Stok ' + p.name + ' hanya ' + p.stock);
       line.qty += 1;
     } else {
-      if (p.stock < 1) return;
+      if (p.stock < 1) return toast('Stok ' + p.name + ' habis');
       S.cart.push({ id: p.id, name: p.name, sku: p.sku, stock: p.stock, listPrice: p.sellPrice, price: p.sellPrice, qty: 1 });
     }
     cartChanged(); renderCart(); renderPos();
@@ -1065,6 +1065,93 @@
 
   // ── Events ──
   $('#pos-search').addEventListener('input', (e) => { S.q = e.target.value; renderPos(); });
+  // A barcode scanner (USB or keyboard-wedge) types the code and presses Enter,
+  // so a full SKU typed or scanned into the search box adds straight to the cart.
+  function findBySku(code) {
+    const c = code.trim();
+    if (!c) return null;
+    const exact = S.products.find((p) => p.sku === c);
+    if (exact) return exact;
+    const lc = c.toLowerCase();
+    const loose = S.products.filter((p) => p.sku.toLowerCase() === lc);
+    return loose.length === 1 ? loose[0] : null;
+  }
+  // Returns true when the code named a product (added or refused for stock),
+  // false when nothing matched and the search filter stays as it is.
+  function scanCode(code) {
+    const p = findBySku(code);
+    if (!p) return false;
+    const before = (S.cart.find((l) => l.id === p.id) || {}).qty || 0;
+    addToCart(p.id);
+    const after = (S.cart.find((l) => l.id === p.id) || {}).qty || 0;
+    if (after > before) toast(p.name + ' masuk keranjang');
+    return true;
+  }
+  $('#pos-search').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing || S.productsState !== 'ok') return;
+    if (!scanCode(e.target.value)) return;
+    e.preventDefault();
+    e.target.value = '';
+    S.q = '';
+    renderPos();
+  });
+  // ── Camera scan (Pindai) ──
+  // Only offered where the browser can read barcodes on its own; no library.
+  const CAN_SCAN = 'BarcodeDetector' in window && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  $('#scan-btn').hidden = !CAN_SCAN;
+  let scanStream = null, scanTimer = 0, scanning = false;
+  function stopScan() {
+    scanning = false;
+    clearTimeout(scanTimer);
+    if (scanStream) { scanStream.getTracks().forEach((t) => t.stop()); scanStream = null; }
+    $('#scan-video').srcObject = null;
+  }
+  async function startScan() {
+    const errEl = $('[data-err]', $('#dlg-scan'));
+    errEl.textContent = '';
+    $('#scan-retry').hidden = true;
+    const video = $('#scan-video');
+    try {
+      if (window.usernode && usernode.requestPermission) {
+        const r = await usernode.requestPermission('camera');
+        if (r && r.state !== 'granted') {
+          errEl.textContent = 'Izin kamera belum diberikan. Cari produk dengan mengetik atau pakai pemindai barcode.';
+          $('#scan-retry').hidden = false;
+          return;
+        }
+        if (r && !r.active) return; // the platform reloads the frame to grant it
+      }
+      scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      video.srcObject = scanStream;
+      await video.play();
+      const detector = new BarcodeDetector();
+      scanning = true;
+      const tick = async () => {
+        if (!scanning) return;
+        let found = null;
+        try { found = (await detector.detect(video)).find((c) => c.rawValue) || null; }
+        catch (e) { /* a single failed read is skipped */ }
+        if (found) {
+          const code = found.rawValue;
+          stopScan();
+          $('#dlg-scan').close();
+          if (!scanCode(code)) { $('#pos-search').value = code; S.q = code; renderPos(); }
+          return;
+        }
+        scanTimer = setTimeout(tick, 200);
+      };
+      tick();
+    } catch (err) {
+      stopScan();
+      errEl.textContent = 'Kamera tidak bisa dibuka. Cari produk dengan mengetik atau pakai pemindai barcode.';
+      $('#scan-retry').hidden = false;
+    }
+  }
+  $('#scan-btn').addEventListener('click', () => { openDlg($('#dlg-scan')); startScan(); });
+  $('#scan-retry').addEventListener('click', () => { stopScan(); startScan(); });
+  // Batal, Esc and a successful read all release the camera through this.
+  $('#dlg-scan').addEventListener('close', stopScan);
+
   $('#stock-search').addEventListener('input', (e) => { S.stockQ = e.target.value; renderStockList(); });
   $('#add-product').addEventListener('click', () => openProduct(null));
   $('#report-date').addEventListener('change', (e) => { if (e.target.value) { S.reportDate = e.target.value; loadReport(); } });
