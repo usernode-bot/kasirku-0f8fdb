@@ -163,7 +163,11 @@
         <h2 class="sr-only">Kasir / Penjualan</h2>
         <div>
           <label for="pos-search" class="section-label block">Cari produk</label>
-          <input id="pos-search" type="search" class="field" placeholder="e.g. beras, atau DEMO-001" autocomplete="off">
+          <div class="flex gap-2">
+            <input id="pos-search" type="search" class="field" placeholder="e.g. beras, atau DEMO-001" autocomplete="off" enterkeyhint="search" aria-describedby="pos-search-hint">
+            <button type="button" id="scan-btn" class="btn-secondary shrink-0" hidden aria-label="Pindai barcode dengan kamera"><svg viewBox="0 0 20 20" class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 7V4h3 M14 4h3v3 M17 13v3h-3 M6 16H3v-3 M7 7v6 M10 7v6 M13 7v6"/></svg><span>Pindai</span></button>
+          </div>
+          <p id="pos-search-hint" class="mt-1 px-1 text-small text-muted">Pindai barcode di kolom ini: produk dengan SKU yang cocok langsung masuk keranjang.</p>
         </div>
         <div id="pos-cats" class="flex gap-2 overflow-x-auto pb-1" role="group" aria-label="Kategori"></div>
         <div id="pos-products"></div>
@@ -474,6 +478,21 @@
       <button type="submit" class="btn-primary">Simpan pembayaran</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="dlg-scan" class="dlg">
+  <div class="flex flex-col gap-3 p-5">
+    <div>
+      <h2 class="text-heading">Pindai barcode</h2>
+      <p class="text-small text-muted">Arahkan kamera ke barcode produk.</p>
+    </div>
+    <video id="scan-video" class="h-64 w-full rounded-lg bg-raised object-cover" playsinline muted></video>
+    <p data-err role="alert" class="text-small text-danger"></p>
+    <div class="flex justify-end gap-2">
+      <button type="button" id="scan-retry" class="btn-secondary" hidden>Coba lagi</button>
+      <button type="button" data-close class="btn-secondary">Batal</button>
+    </div>
+  </div>
 </dialog>
 
 <dialog id="dlg-receipt" class="dlg print:hidden">
