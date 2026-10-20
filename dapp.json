@@ -68,6 +68,12 @@
       ]
     },
     {
+      "id": "kasir.search",
+      "name": "Kasir has a product search box above the product list",
+      "path": "/",
+      "expectSelector": "#pos-search"
+    },
+    {
       "id": "insights.empty",
       "name": "Insights answer honestly for a visitor without a store",
       "path": "/api/insights",
