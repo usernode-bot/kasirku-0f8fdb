@@ -89,6 +89,23 @@
       ]
     },
     {
+      "id": "kasir.today",
+      "name": "Kasir shows today's sales total",
+      "path": "/",
+      "expectSelector": "#today-sales",
+      "impact": [
+        "public/**",
+        "api.js",
+        "styles/**"
+      ]
+    },
+    {
+      "id": "sales.today-empty",
+      "name": "Today's sales answer honestly for a visitor without a store",
+      "path": "/api/sales/today",
+      "expectText": "\"count\":0"
+    },
+    {
       "id": "insights.empty",
       "name": "Insights answer honestly for a visitor without a store",
       "path": "/api/insights",
