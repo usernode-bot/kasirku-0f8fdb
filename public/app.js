@@ -134,13 +134,18 @@
     if (!hasStore()) { S.store = null; renderBrand(); renderOnboarding(); return; }
     try {
       S.store = await api('/api/store');
-      S.taxPct = S.store ? S.store.taxPercent : 11;
+      S.taxPct = S.store && S.store.taxEnabled ? S.store.taxPercent : 0;
       $('#tax-pct').value = String(S.taxPct);
       $('#staging-note').hidden = !(S.store && S.store.staging);
       renderBrand();
+      renderPayMethods();
       renderCart();
       renderOnboarding();
-    } catch (e) { S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', taxPercent: 11, briAccountNo: '', briAccountName: '' }; renderBrand(); renderOnboarding(); }
+    } catch (e) {
+      S.store = S.store || { name: 'KasirKU', address: '', phone: '', logoUrl: '', qrisUrl: '',
+        taxPercent: 11, taxEnabled: true, bankAccounts: [], paymentMethods: { cash: true, qris: true, debit: true, transfer: true } };
+      renderBrand(); renderOnboarding();
+    }
   }
   async function loadProducts() {
     loadInsights();
@@ -474,6 +479,20 @@
     return '';
   }
 
+  // ── Payment methods: only the ones the store turned on are offered ──
+  function renderPayMethods() {
+    const m = (S.store && S.store.paymentMethods) || { cash: true, qris: true, debit: true, transfer: true };
+    $$('#pay-methods [data-method]').forEach((b) => {
+      b.hidden = b.dataset.method !== 'credit' && !m[b.dataset.method];
+    });
+    // If the chosen method was turned off, move to the first one that is on.
+    const on = $$('#pay-methods [data-method]').filter((b) => !b.hidden).map((b) => b.dataset.method);
+    if (!on.includes(S.method)) {
+      const next = ['cash', 'qris', 'debit', 'transfer', 'credit'].find((k) => on.includes(k));
+      if (next) { S.method = next; cartChanged(); }
+    }
+  }
+
   function renderCart() {
     const box = $('#cart-lines');
     $('#cart-clear').hidden = !S.cart.length;
@@ -503,11 +522,18 @@
     $('#t-disc').textContent = t.discount ? '-' + rp(t.discount) : rp(0);
     $('#t-tax').textContent = rp(t.tax);
     $('#t-total').textContent = rp(t.total);
+    // PPN off in Profil toko: no field, no line, and the sale is recorded at 0%.
+    $$('[data-tax-ui]').forEach((el) => { el.hidden = S.taxPct <= 0; });
     S.cart.forEach((l) => { const el = $('[data-line-total="' + l.id + '"]'); if (el) el.textContent = rp(l.qty * l.price); });
     const cash = S.method === 'cash';
     $('#cash-box').hidden = !cash;
-    $('#bri-box').hidden = S.method !== 'bri';
-    if (S.method === 'bri') renderBri(t);
+    // 'bri' is the old label for a bank transfer: an old tab still on it shows
+    // the same Transfer bank pane.
+    const transferPane = S.method === 'transfer' || S.method === 'bri';
+    $('#transfer-box').hidden = !transferPane;
+    if (transferPane) renderTransfer(t);
+    $('#qris-box').hidden = S.method !== 'qris';
+    if (S.method === 'qris') renderQris(t);
     $('#credit-box').hidden = S.method !== 'credit';
     const change = S.paid - t.total;
     $('#t-change').textContent = rp(cash && change > 0 ? change : 0);
@@ -528,43 +554,69 @@
     $('#pay-btn').textContent = S.paying ? 'Memproses…' : S.payUncertain ? 'Coba bayar lagi' : payLabel + (t.total ? ' ' + rp(t.total) : '');
   }
 
-  // ── Transfer BRI: the store's account, shown while that method is chosen ──
+  // ── Transfer bank: the store's accounts, shown while that method is chosen ──
   const briParts = (no) => no.replace(/(\d{4})(?=\d)/g, '$1 ');
-  function renderBri(t) {
+  function renderTransfer(t) {
     const s = S.store || {};
-    const box = $('#bri-details');
-    if (!s.briAccountNo || !s.briAccountName) {
+    const accs = Array.isArray(s.bankAccounts) ? s.bankAccounts : [];
+    const box = $('#transfer-details');
+    if (!accs.length) {
       box.innerHTML = '<div class="flex flex-col items-start gap-2 rounded-lg border border-dashed border-line p-3">'
-        + '<p class="text-body font-medium">Rekening BRI belum diisi</p>'
-        + '<p class="text-small text-muted">Isi nomor rekening dan nama pemilik di Profil toko supaya pembeli tahu ke mana harus transfer.</p>'
-        + '<button type="button" class="btn-secondary" data-bri-setup>Isi rekening BRI</button></div>';
+        + '<p class="text-body font-medium">Rekening bank belum diisi</p>'
+        + '<p class="text-small text-muted">Isi rekening bank di Profil toko supaya pembeli tahu ke mana harus transfer.</p>'
+        + '<button type="button" class="btn-secondary" data-bank-setup>Isi rekening bank</button></div>';
       return;
     }
     box.innerHTML = '<dl class="divide-y divide-line border-y border-line">'
-      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Bank</dt><dd class="text-body">BRI (Bank Rakyat Indonesia)</dd></div>'
-      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Nomor rekening</dt><dd class="flex items-center gap-2">'
-      + '<span class="whitespace-nowrap font-mono text-body font-medium" id="bri-no">' + esc(briParts(s.briAccountNo)) + '</span>'
-      + '<button type="button" class="btn-secondary" data-bri-copy aria-label="Salin nomor rekening BRI">Salin</button></dd></div>'
-      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Atas nama</dt><dd class="text-body">' + esc(s.briAccountName) + '</dd></div>'
-      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Jumlah transfer</dt><dd class="text-heading" id="bri-total">' + rp(t.total) + '</dd></div>'
+      + accs.map((a, i) =>
+        '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow min-w-0">'
+        + '<p class="text-body font-medium">' + esc(a.bank) + '</p>'
+        + '<p class="text-small text-muted">a.n. ' + esc(a.accountName) + '</p></dt>'
+        + '<dd class="flex shrink-0 items-center gap-2">'
+        + '<span class="whitespace-nowrap font-mono text-body font-medium">' + esc(briParts(a.accountNo)) + '</span>'
+        + '<button type="button" class="btn-secondary" data-copy-acc="' + i + '" aria-label="Salin nomor rekening ' + esc(a.bank) + '">Salin</button></dd></div>').join('')
+      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Jumlah transfer</dt>'
+      + '<dd class="text-heading">' + rp(t.total) + '</dd></div>'
       + '</dl>';
   }
-  async function copyBriNo() {
-    const no = (S.store && S.store.briAccountNo) || '';
-    if (!no) return;
+  async function copyText(text) {
     try {
-      await navigator.clipboard.writeText(no);
-      toast('Nomor rekening BRI disalin');
+      await navigator.clipboard.writeText(text);
+      return true;
     } catch (_) {
       // Older WebViews: fall back to a selected textarea.
       const ta = document.createElement('textarea');
-      ta.value = no; ta.setAttribute('readonly', ''); ta.className = 'sr-only';
+      ta.value = text; ta.setAttribute('readonly', ''); ta.className = 'sr-only';
       document.body.appendChild(ta); ta.select();
       let ok = false;
       try { ok = document.execCommand('copy'); } catch (_e) {}
       ta.remove();
-      toast(ok ? 'Nomor rekening BRI disalin' : 'Nomor rekening tidak bisa disalin dari sini');
+      return ok;
     }
+  }
+  async function copyAccountNo(i) {
+    const accs = (S.store && S.store.bankAccounts) || [];
+    const a = accs[i];
+    if (!a) return;
+    const ok = await copyText(a.accountNo);
+    toast(ok ? 'Nomor rekening ' + a.bank + ' disalin' : 'Nomor rekening tidak bisa disalin dari sini');
+  }
+  function renderQris(t) {
+    const s = S.store || {};
+    const box = $('#qris-details');
+    if (!s.qrisUrl) {
+      box.innerHTML = '<div class="flex flex-col items-start gap-2 rounded-lg border border-dashed border-line p-3">'
+        + '<p class="text-body font-medium">QRIS toko belum diunggah</p>'
+        + '<p class="text-small text-muted">Unggah kode QRIS toko di Profil toko supaya pembeli bisa memindainya.</p>'
+        + '<button type="button" class="btn-secondary" data-qris-setup>Unggah QRIS toko</button></div>';
+      return;
+    }
+    box.innerHTML = '<div class="flex flex-col items-center gap-2 pb-2">'
+      + '<img src="' + esc(s.qrisUrl) + '" alt="QRIS toko" class="max-w-full rounded-lg border border-line bg-surface object-contain" style="width:15rem;height:15rem">'
+      + '</div>'
+      + '<dl class="divide-y divide-line border-y border-line">'
+      + '<div class="flex min-h-11 items-center gap-3 py-2"><dt class="grow text-small text-muted">Jumlah bayar</dt>'
+      + '<dd class="text-heading">' + rp(t.total) + '</dd></div></dl>';
   }
 
   function newRef() {
@@ -813,12 +865,56 @@
       ? '<img src="' + esc(logoDraft) + '" alt="Logo toko" class="h-12 w-12 rounded-lg object-cover">' : logoSvg('h-12 w-12');
     $('#s-logo-remove').hidden = !logoDraft;
   }
+  // ── Rekening bank: up to 3 accounts at any bank ──
+  const BANKS = ['BCA', 'BRI', 'Mandiri', 'BNI', 'BSI', 'SeaBank', 'Jago'];
+  const emptyBankRow = () => ({ bank: '', other: '', no: '', name: '' });
+  // A stored bank outside the seven loads as "Lainnya" with its name filled in.
+  const toBankDraft = (a) => (BANKS.includes(a.bank)
+    ? { bank: a.bank, other: '', no: a.accountNo, name: a.accountName }
+    : { bank: 'Lainnya', other: a.bank, no: a.accountNo, name: a.accountName });
+  let bankDraft = [];
+  function renderBankRows() {
+    $('#s-banks').innerHTML = bankDraft.map((r, i) =>
+      '<div class="flex flex-col gap-2 rounded-lg border border-line p-3">'
+      + '<p class="text-small font-medium">Rekening ' + (i + 1) + '</p>'
+      + '<div><label class="section-label mb-1 block" for="s-bank-' + i + '-bank">Bank</label>'
+      + '<select id="s-bank-' + i + '-bank" class="field" data-bank-i="' + i + '" data-bank-k="bank">'
+      + '<option value=""' + (r.bank ? '' : ' selected') + ' disabled>Pilih bank</option>'
+      + BANKS.map((b) => '<option value="' + b + '"' + (r.bank === b ? ' selected' : '') + '>' + b + '</option>').join('')
+      + '<option value="Lainnya"' + (r.bank === 'Lainnya' ? ' selected' : '') + '>Lainnya</option>'
+      + '</select></div>'
+      + '<div' + (r.bank === 'Lainnya' ? '' : ' hidden') + '><label class="section-label mb-1 block" for="s-bank-' + i + '-other">Nama bank</label>'
+      + '<input id="s-bank-' + i + '-other" class="field" maxlength="40" autocomplete="off" data-bank-i="' + i + '" data-bank-k="other" placeholder="e.g. Bank Nagari" value="' + esc(r.other) + '"></div>'
+      + '<div><label class="section-label mb-1 block" for="s-bank-' + i + '-no">Nomor rekening</label>'
+      + '<input id="s-bank-' + i + '-no" class="field" maxlength="40" inputmode="numeric" autocomplete="off" data-bank-i="' + i + '" data-bank-k="no" placeholder="e.g. 1234 5678 90" value="' + esc(r.no) + '"></div>'
+      + '<div><label class="section-label mb-1 block" for="s-bank-' + i + '-name">Nama pemilik rekening</label>'
+      + '<input id="s-bank-' + i + '-name" class="field" maxlength="80" autocomplete="off" data-bank-i="' + i + '" data-bank-k="name" placeholder="e.g. Budi Santoso" value="' + esc(r.name) + '"></div>'
+      + '<button type="button" class="btn-secondary self-start" data-bank-del="' + i + '">Hapus rekening</button>'
+      + '</div>').join('');
+    $('#s-bank-add').hidden = bankDraft.length >= 3;
+  }
+  // ── QRIS toko ──
+  let qrisDraft = '';
+  function renderQrisDraft() {
+    $('#s-qris-preview').innerHTML = qrisDraft
+      ? '<img src="' + esc(qrisDraft) + '" alt="QRIS toko" class="h-12 w-12 rounded-lg object-cover">'
+      : '<span class="flex h-12 w-12 items-center justify-center rounded-lg border border-dashed border-line text-small text-muted">QRIS</span>';
+    $('#s-qris-remove').hidden = !qrisDraft;
+  }
   function openStoreProfile() {
     const s = S.store || {};
     $('#s-name').value = s.name || ''; $('#s-address').value = s.address || ''; $('#s-phone').value = s.phone || '';
-    $('#s-tax').value = s.taxPercent != null ? s.taxPercent : 11; logoDraft = s.logoUrl || '';
-    $('#s-bri-no').value = s.briAccountNo ? briParts(s.briAccountNo) : ''; $('#s-bri-name').value = s.briAccountName || '';
-    renderLogoDraft(); openDlg($('#dlg-store'));
+    logoDraft = s.logoUrl || '';
+    $('#s-tax-on').checked = !!s.taxEnabled;
+    $('#s-tax').value = s.taxPercent != null ? s.taxPercent : 11;
+    $('#s-tax-wrap').hidden = !$('#s-tax-on').checked;
+    const pm = s.paymentMethods || { cash: true, qris: true, debit: true, transfer: true };
+    $$('[data-pay]').forEach((c) => { c.checked = pm[c.dataset.pay] !== false; });
+    bankDraft = Array.isArray(s.bankAccounts) && s.bankAccounts.length
+      ? s.bankAccounts.map(toBankDraft) : [emptyBankRow()];
+    qrisDraft = s.qrisUrl || '';
+    renderBankRows(); renderLogoDraft(); renderQrisDraft();
+    openDlg($('#dlg-store'));
   }
   $('#open-store').addEventListener('click', openStoreProfile);
   $('#open-store-profile').addEventListener('click', () => { if ($('#dlg-stores').open) $('#dlg-stores').close(); openStoreProfile(); });
@@ -832,17 +928,61 @@
       logoDraft = stored.url; renderLogoDraft(); setErr($('#dlg-store'), '');
     } catch (err) { setErr($('#dlg-store'), 'Logo gagal diunggah: ' + ((err && err.message) || 'coba gambar PNG atau JPEG di bawah 5 MB') + '.'); }
   });
+  $('#s-qris-remove').addEventListener('click', () => { qrisDraft = ''; renderQrisDraft(); });
+  $('#s-qris-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0]; e.target.value = '';
+    if (!file) return;
+    if (!window.usernode || !usernode.uploadFile) return setErr($('#dlg-store'), 'Unggah QRIS hanya tersedia di dalam Homeroom.');
+    try {
+      const stored = await usernode.uploadFile(file, { visibility: 'public' });
+      qrisDraft = stored.url; renderQrisDraft(); setErr($('#dlg-store'), '');
+    } catch (err) { setErr($('#dlg-store'), 'QRIS gagal diunggah: ' + ((err && err.message) || 'coba gambar PNG atau JPEG di bawah 5 MB') + '.'); }
+  });
+  $('#s-tax-on').addEventListener('change', () => { $('#s-tax-wrap').hidden = !$('#s-tax-on').checked; });
+  $('#s-bank-add').addEventListener('click', () => {
+    if (bankDraft.length >= 3) return;
+    bankDraft.push(emptyBankRow());
+    renderBankRows();
+  });
+  // Typing updates the draft without a re-render, so the field keeps focus;
+  // picking a bank re-renders the row to show or hide "Nama bank".
+  $('#s-banks').addEventListener('input', (e) => {
+    const i = e.target.dataset.bankI; const k = e.target.dataset.bankK;
+    if (i === undefined || !k) return;
+    bankDraft[Number(i)][k] = e.target.value;
+  });
+  $('#s-banks').addEventListener('change', (e) => {
+    if (e.target.dataset.bankK !== 'bank') return;
+    bankDraft[Number(e.target.dataset.bankI)].bank = e.target.value;
+    renderBankRows();
+  });
   $('#form-store').addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = $('#s-name').value.trim();
     if (!name) return setErr($('#dlg-store'), 'Nama toko wajib diisi.');
+    // Completely empty rows are dropped; a partly filled row is sent as-is so
+    // the server answers with its "Rekening N: …" message.
+    const accs = bankDraft
+      .filter((r) => r.bank || r.other.trim() || r.no.trim() || r.name.trim())
+      .map((r) => ({ bank: r.bank === 'Lainnya' ? r.other.trim() : r.bank, accountNo: r.no.trim(), accountName: r.name.trim() }));
+    const taxEnabled = $('#s-tax-on').checked;
     try {
-      const saved = await api('/api/store', { method: 'PUT', body: { name, address: $('#s-address').value.trim(), phone: $('#s-phone').value.trim(), logoUrl: logoDraft, taxPercent: dec($('#s-tax').value),
-        briAccountNo: $('#s-bri-no').value.trim(), briAccountName: $('#s-bri-name').value.trim() } });
+      const saved = await api('/api/store', { method: 'PUT', body: {
+        name, address: $('#s-address').value.trim(), phone: $('#s-phone').value.trim(),
+        logoUrl: logoDraft, qrisUrl: qrisDraft,
+        taxEnabled, taxPercent: taxEnabled ? dec($('#s-tax').value) : null,
+        paymentMethods: {
+          cash: $('#s-pay-cash').checked, qris: $('#s-pay-qris').checked,
+          debit: $('#s-pay-debit').checked, transfer: $('#s-pay-transfer').checked,
+        },
+        bankAccounts: accs,
+      } });
       // The PUT response carries no hasSales; keep the loaded one so the
       // checklist state survives editing the profile.
       S.store = Object.assign({}, S.store, saved);
-      S.taxPct = S.store.taxPercent; $('#tax-pct').value = String(S.taxPct);
+      S.taxPct = S.store.taxEnabled ? S.store.taxPercent : 0;
+      $('#tax-pct').value = String(S.taxPct);
+      renderPayMethods();
       const idx = S.stores.findIndex((s) => s.id === S.store.id);
       if (idx >= 0) S.stores[idx] = Object.assign({}, S.stores[idx], S.store);
       renderBrand(); updateTotals(); $('#dlg-store').close(); toast('Profil toko disimpan');
@@ -851,7 +991,7 @@
 
   // ── Tambah toko ──
   function openNewStore() {
-    $('#n-name').value = ''; $('#n-address').value = ''; $('#n-phone').value = ''; $('#n-tax').value = 11;
+    $('#n-name').value = ''; $('#n-address').value = ''; $('#n-phone').value = '';
     if ($('#dlg-stores').open) $('#dlg-stores').close();
     openDlg($('#dlg-new-store'));
   }
@@ -873,7 +1013,7 @@
     const name = $('#n-name').value.trim();
     if (!name) return setErr($('#dlg-new-store'), 'Nama toko wajib diisi.');
     try {
-      const created = await api('/api/stores', { method: 'POST', body: { name, address: $('#n-address').value.trim(), phone: $('#n-phone').value.trim(), taxPercent: dec($('#n-tax').value) } });
+      const created = await api('/api/stores', { method: 'POST', body: { name, address: $('#n-address').value.trim(), phone: $('#n-phone').value.trim() } });
       $('#dlg-new-store').close();
       await afterStoreCreated(created);
     } catch (err) { setErr($('#dlg-new-store'), err.message); }
@@ -889,7 +1029,7 @@
     const btn = form.querySelector('button[type="submit"]');
     btn.disabled = true;
     try {
-      const created = await api('/api/stores', { method: 'POST', body: { name, address: '', phone: '', taxPercent: 11 } });
+      const created = await api('/api/stores', { method: 'POST', body: { name, address: '', phone: '' } });
       $('#g-name').value = '';
       await afterStoreCreated(created);
     } catch (err) { setErr(form, err.message); }
@@ -1238,8 +1378,15 @@
     else if (d.receipt) showReceipt(Number(d.receipt));
     else if (d.payDebt) openDebtPay(Number(d.payDebt));
     else if (d.goto) goto(d.goto);
-    else if (t.hasAttribute('data-bri-copy')) copyBriNo();
-    else if (t.hasAttribute('data-bri-setup')) { openStoreProfile(); $('#s-bri-no').focus(); }
+    else if (d.copyAcc !== undefined) copyAccountNo(Number(d.copyAcc));
+    else if (t.hasAttribute('data-bank-setup')) {
+      openStoreProfile();
+      if (!bankDraft.length) { bankDraft.push(emptyBankRow()); renderBankRows(); }
+      const first = $('#s-banks select');
+      if (first) first.focus();
+    }
+    else if (t.hasAttribute('data-qris-setup')) { openStoreProfile(); $('#s-qris-label').focus(); }
+    else if (d.bankDel !== undefined) { bankDraft.splice(Number(d.bankDel), 1); renderBankRows(); }
     else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: retryStores, debts: loadDebts, insights: loadInsights })[d.retry]();
   });
 

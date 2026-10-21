@@ -46,7 +46,7 @@
     --surface: 28 25 23;
     --raised: 41 37 36;
     --fg: 245 245 244;
-    --muted: 168 162 158;
+    --muted: 190 185 180;
     --line: 68 64 60;
     --accent: 45 212 191;
     --on-accent: 4 47 46;
@@ -135,7 +135,14 @@
   .tab {
     @apply inline-flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-3 text-body font-medium text-muted
       hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus aria-selected:border-accent aria-selected:text-fg
-      disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-muted;
+      disabled:cursor-not-allowed disabled:hover:text-muted;
+  }
+  /* A locked tab (no store yet) reads like an unselected one: full muted, no
+     underline — the padlock and the hint line below stay its locked marker.
+     Same specificity as .tab[aria-selected=true], but written later, so it
+     wins: a locked Kasir tab must not look like the open one. */
+  .tab:disabled {
+    @apply border-transparent text-muted;
   }
   /* A choice among a few: payment method, category. */
   .seg {

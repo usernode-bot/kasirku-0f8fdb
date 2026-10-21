@@ -75,6 +75,16 @@
       "expectSelector": "#pos-search"
     },
     {
+      "id": "kasir.transfer-method",
+      "name": "Kasir offers Transfer bank",
+      "path": "/",
+      "expectSelector": "#pay-methods [data-method=\"transfer\"]",
+      "impact": [
+        "public/**",
+        "api.js"
+      ]
+    },
+    {
       "id": "kasir.scan",
       "name": "Kasir has the barcode scan control",
       "path": "/",
