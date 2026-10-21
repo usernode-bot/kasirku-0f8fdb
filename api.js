@@ -124,6 +124,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS sales_store_client_ref ON sales (store_id, cli
 -- the owner fills it in under Profil toko.
 ALTER TABLE stores ADD COLUMN IF NOT EXISTS bri_account_no TEXT NOT NULL DEFAULT '';
 ALTER TABLE stores ADD COLUMN IF NOT EXISTS bri_account_name TEXT NOT NULL DEFAULT '';
+-- Bank accounts per store (any bank, up to 3), the shop's QRIS image, which
+-- payment methods the Kasir offers and whether the store charges PPN.
+-- The bri_account_* columns above are kept only as the source for the
+-- one-time copy below; the app no longer reads or writes them.
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS bank_accounts JSONB;
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS qris_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS pay_cash BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS pay_qris BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS pay_debit BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS pay_transfer BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS tax_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+-- One-time copy of the old single BRI account into the new list. Only rows
+-- still NULL are touched, so deleting every account later never brings it
+-- back; rows with no BRI account become an empty list.
+UPDATE stores SET bank_accounts = CASE
+  WHEN bri_account_no <> '' AND bri_account_name <> ''
+  THEN jsonb_build_array(jsonb_build_object('bank','BRI','accountNo',bri_account_no,'accountName',bri_account_name))
+  ELSE '[]'::jsonb END
+WHERE bank_accounts IS NULL;
 
 -- Bayar nanti (credit) sales: who took the goods, and the payments that
 -- settle the debt. The outstanding amount is never stored as a balance: it
@@ -220,21 +239,28 @@ const DEMO_PRODUCTS = [
 
 async function seedDemo(pool) {
   await pool.query(
-    `INSERT INTO stores (id, owner_id, name, address, phone, tax_percent)
-     VALUES ($1, $2, 'Staging demo Toko Contoh Sejahtera', 'Jl. Contoh No. 12, Jakarta', '021-5550123', 11)
+    `INSERT INTO stores (id, owner_id, name, address, phone, tax_percent, bank_accounts)
+     VALUES ($1, $2, 'Staging demo Toko Contoh Sejahtera', 'Jl. Contoh No. 12, Jakarta', '021-5550123', 11, '[]'::jsonb)
      ON CONFLICT (id) DO NOTHING`, [DEMO_STORE_1, DEMO_OWNER_ID]);
   await pool.query(
-    `INSERT INTO stores (id, owner_id, name, address, phone, tax_percent)
-     VALUES ($1, $2, 'Staging demo Cabang Melati', 'Jl. Melati No. 5, Bandung', '022-7770456', 11)
+    `INSERT INTO stores (id, owner_id, name, address, phone, tax_percent, bank_accounts)
+     VALUES ($1, $2, 'Staging demo Cabang Melati', 'Jl. Melati No. 5, Bandung', '022-7770456', 11, '[]'::jsonb)
      ON CONFLICT (id) DO NOTHING`, [DEMO_STORE_2, DEMO_OWNER_ID]);
   await pool.query(
     `SELECT setval(pg_get_serial_sequence('stores','id'), GREATEST((SELECT MAX(id) FROM stores), 1))`);
-  // Demo store 1 gets an obviously fake BRI account so the filled-in
-  // transfer instruction can be seen; store 2 stays without one on purpose.
+  // Demo store 1 gets two obviously fake bank accounts, PPN on and a
+  // placeholder QRIS image (not a payable code) so the filled-in panes can be
+  // seen; store 2 stays empty on purpose, with Debit off, so the prompts and
+  // the method switches can be seen.
   await pool.query(
-    `UPDATE stores SET bri_account_no = '0000010000000000', bri_account_name = 'Staging Demo Toko'
-     WHERE id = $1 AND bri_account_no = ''`,
-    [DEMO_STORE_1]);
+    `UPDATE stores SET bank_accounts = $2::jsonb, tax_enabled = TRUE, qris_url = '/staging-demo-qris.svg'
+     WHERE id = $1 AND qris_url = ''`,
+    [DEMO_STORE_1, JSON.stringify([
+      { bank: 'BRI', accountNo: '0000010000000000', accountName: 'Staging Demo Toko' },
+      { bank: 'BCA', accountNo: '0000020000', accountName: 'Staging Demo Toko' },
+    ])]);
+  await pool.query(
+    `UPDATE stores SET pay_debit = FALSE WHERE id = $1 AND pay_debit = TRUE`, [DEMO_STORE_2]);
   for (const [sku, name, category, cost, sell, stock, min] of DEMO_PRODUCTS) {
     await pool.query(
       `INSERT INTO products (store_id, sku, name, category, cost_price, sell_price, stock, min_stock)
@@ -412,7 +438,10 @@ function mountApi({ app, pool, IS_STAGING }) {
   });
   const storeRow = (r) => ({
     id: r.id, name: r.name, address: r.address, phone: r.phone, logoUrl: r.logo_url,
-    taxPercent: Number(r.tax_percent), briAccountNo: r.bri_account_no || '', briAccountName: r.bri_account_name || '',
+    taxPercent: Number(r.tax_percent), taxEnabled: !!r.tax_enabled,
+    qrisUrl: r.qris_url || '',
+    bankAccounts: Array.isArray(r.bank_accounts) ? r.bank_accounts : [],
+    paymentMethods: { cash: !!r.pay_cash, qris: !!r.pay_qris, debit: !!r.pay_debit, transfer: !!r.pay_transfer },
     staging: IS_STAGING,
   });
   const saleRow = (r) => ({
@@ -470,14 +499,43 @@ function mountApi({ app, pool, IS_STAGING }) {
     const phone = text(b.phone, 'Telepon', { max: 40 });
     const logoUrl = text(b.logoUrl, 'Logo', { max: 500 });
     if (logoUrl && !/^(https?:\/\/|\/)/.test(logoUrl)) throw bad('Logo tidak valid');
-    const tax = Number(b.taxPercent);
-    if (!Number.isFinite(tax) || tax < 0 || tax > 100) throw bad('PPN harus antara 0 dan 100');
-    // Account number is kept as digits only; spaces and dashes are accepted on input.
-    const briNo = text(b.briAccountNo, 'Nomor rekening BRI', { max: 40 }).replace(/[\s.-]/g, '');
-    if (briNo && !/^\d{10,20}$/.test(briNo)) throw bad('Nomor rekening BRI harus 10 sampai 20 angka');
-    const briName = text(b.briAccountName, 'Nama pemilik rekening', { max: 80 });
-    if (!briNo !== !briName) throw bad('Isi nomor rekening BRI dan nama pemilik rekening, atau kosongkan keduanya');
-    return { name, address, phone, logoUrl, tax, briNo, briName };
+    const qrisUrl = text(b.qrisUrl, 'QRIS', { max: 500 });
+    if (qrisUrl && !/^(https?:\/\/|\/)/.test(qrisUrl)) throw bad('QRIS tidak valid');
+    // PPN is a switch now: off by default, and the saved rate survives while
+    // it is off (the UPDATE keeps the old tax_percent with COALESCE).
+    const taxEnabled = b.taxEnabled === true;
+    let tax = null;
+    if (taxEnabled) {
+      tax = Number(b.taxPercent);
+      if (!Number.isFinite(tax) || tax <= 0 || tax > 100) throw bad('Tarif PPN harus antara 0 dan 100');
+    }
+    // Bank accounts: up to 3, any bank. Account numbers are kept digits only;
+    // spaces, dots and dashes are accepted on input.
+    const rawAccs = b.bankAccounts;
+    let bankAccounts = [];
+    if (rawAccs != null) {
+      if (!Array.isArray(rawAccs) || rawAccs.length > 3) throw bad('Paling banyak 3 rekening bank');
+      bankAccounts = rawAccs.map((a, i) => {
+        const n = i + 1;
+        const bank = typeof (a && a.bank) === 'string' ? a.bank.trim() : '';
+        if (!bank) throw bad(`Rekening ${n}: isi nama bank`);
+        if (bank.length > 40) throw bad(`Rekening ${n}: nama bank terlalu panjang`);
+        const no = typeof (a && a.accountNo) === 'string' ? a.accountNo.replace(/[\s.-]/g, '') : '';
+        if (!/^\d{10,20}$/.test(no)) throw bad(`Rekening ${n}: nomor rekening harus 10 sampai 20 angka`);
+        const nm = typeof (a && a.accountName) === 'string' ? a.accountName.trim() : '';
+        if (!nm) throw bad(`Rekening ${n}: isi nama pemilik rekening`);
+        if (nm.length > 80) throw bad(`Rekening ${n}: nama pemilik rekening terlalu panjang`);
+        return { bank, accountNo: no, accountName: nm };
+      });
+    }
+    // Which methods the Kasir offers. Missing means all on; at least one of
+    // the four must stay on. Bayar nanti (credit) has no switch.
+    const rawPay = b.paymentMethods;
+    const pay = rawPay == null
+      ? { cash: true, qris: true, debit: true, transfer: true }
+      : { cash: rawPay.cash === true, qris: rawPay.qris === true, debit: rawPay.debit === true, transfer: rawPay.transfer === true };
+    if (!pay.cash && !pay.qris && !pay.debit && !pay.transfer) throw bad('Nyalakan paling tidak satu metode pembayaran');
+    return { name, address, phone, logoUrl, qrisUrl, tax, taxEnabled, bankAccounts, pay };
   }
 
   app.post('/api/stores', h(async (req, res) => {
@@ -485,9 +543,11 @@ function mountApi({ app, pool, IS_STAGING }) {
     const owner = req.user && req.user.id != null ? req.user.id : null;
     if (owner == null) throw new HttpError(401, 'account_required');
     const { rows } = await pool.query(
-      `INSERT INTO stores (owner_id, name, address, phone, logo_url, tax_percent, bri_account_no, bri_account_name)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [owner, s.name, s.address, s.phone, s.logoUrl, s.tax, s.briNo, s.briName]);
+      `INSERT INTO stores (owner_id, name, address, phone, logo_url, tax_percent, tax_enabled,
+         qris_url, bank_accounts, pay_cash, pay_qris, pay_debit, pay_transfer)
+       VALUES ($1,$2,$3,$4,$5,COALESCE($6,11),$7,$8,$9::jsonb,$10,$11,$12,$13) RETURNING *`,
+      [owner, s.name, s.address, s.phone, s.logoUrl, s.tax, s.taxEnabled, s.qrisUrl,
+        JSON.stringify(s.bankAccounts), s.pay.cash, s.pay.qris, s.pay.debit, s.pay.transfer]);
     res.status(201).json(storeRow(rows[0]));
   }));
 
@@ -505,8 +565,8 @@ function mountApi({ app, pool, IS_STAGING }) {
       const exists = await client.query('SELECT 1 FROM stores WHERE owner_id = $1', [owner]);
       if (exists.rows.length) throw new HttpError(409, 'Data contoh hanya untuk akun yang belum punya toko');
       const { rows } = await client.query(
-        `INSERT INTO stores (owner_id, name, address, phone, logo_url, tax_percent)
-         VALUES ($1, 'Toko Contoh', '', '', '', 11) RETURNING *`, [owner]);
+        `INSERT INTO stores (owner_id, name, address, phone, logo_url, tax_percent, tax_enabled, bank_accounts)
+         VALUES ($1, 'Toko Contoh', '', '', '', 11, FALSE, '[]'::jsonb) RETURNING *`, [owner]);
       await seedSampleStore(client, rows[0].id, actor(req), req.now);
       await client.query('COMMIT');
       res.status(201).json(storeRow(rows[0]));
@@ -530,10 +590,13 @@ function mountApi({ app, pool, IS_STAGING }) {
     if (!req.store) throw new HttpError(404, 'Toko tidak ditemukan');
     const s = readStore(req.body || {});
     const { rows } = await pool.query(
-      `UPDATE stores SET name=$1, address=$2, phone=$3, logo_url=$4, tax_percent=$5,
-         bri_account_no=$6, bri_account_name=$7
-       WHERE id=$8 RETURNING *`,
-      [s.name, s.address, s.phone, s.logoUrl, s.tax, s.briNo, s.briName, req.store.id]);
+      `UPDATE stores SET name=$1, address=$2, phone=$3, logo_url=$4, tax_enabled=$5,
+         tax_percent=COALESCE($6, tax_percent), qris_url=$7, bank_accounts=$8::jsonb,
+         pay_cash=$9, pay_qris=$10, pay_debit=$11, pay_transfer=$12
+       WHERE id=$13 RETURNING *`,
+      [s.name, s.address, s.phone, s.logoUrl, s.taxEnabled, s.tax, s.qrisUrl,
+        JSON.stringify(s.bankAccounts), s.pay.cash, s.pay.qris, s.pay.debit, s.pay.transfer,
+        req.store.id]);
     res.json(storeRow(rows[0]));
   }));
 
@@ -698,6 +761,13 @@ function mountApi({ app, pool, IS_STAGING }) {
           return res.status(200).json({ sale: saleRow(done), duplicate: true });
         }
       }
+      // A method the owner turned off is refused for new sales. After the
+      // duplicate check, so a retry of an already-recorded sale still returns
+      // that sale. 'bri' rides on pay_transfer: it is the old label for the
+      // same bank transfer, kept for tabs opened before the deploy.
+      const pay = { cash: req.store.pay_cash, qris: req.store.pay_qris, debit: req.store.pay_debit,
+        transfer: req.store.pay_transfer, bri: req.store.pay_transfer, credit: true };
+      if (!pay[method]) throw bad('Metode pembayaran ini dimatikan di Profil toko');
       // After the duplicate check, so a retried cart never upserts twice.
       let customerId = null;
       if (method === 'credit') {
