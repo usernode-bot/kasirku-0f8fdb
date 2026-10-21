@@ -76,6 +76,7 @@
     checkoutRef: null, payUncertain: false,
     movements: null, movementsState: 'loading', report: null, reportState: 'loading', reportDate: today(),
     debts: null, debtsState: 'loading', debtRef: null, debtCustomerId: null,
+    todaySales: null, todayState: 'loading',
     insights: null, insightsState: 'loading',
     reportMode: 'daily', reportMonth: today().slice(0, 7),
     receipt: null,
@@ -189,6 +190,14 @@
     S.debtsState = 'loading'; renderDebts();
     try { S.debts = await api('/api/debts'); S.debtsState = 'ok'; } catch (e) { S.debtsState = 'error'; }
     renderDebts();
+  }
+  // The Kasir tab's Penjualan hari ini bar: today's omzet and transaction
+  // count, the same day and figure as the daily report.
+  async function loadToday() {
+    if (!hasStore()) { S.todaySales = null; S.todayState = 'ok'; renderToday(); return; }
+    S.todayState = 'loading'; renderToday();
+    try { S.todaySales = await api('/api/sales/today'); S.todayState = 'ok'; } catch (e) { S.todayState = 'error'; }
+    renderToday();
   }
   // The 7-day insight figures behind the Stok tab's warning and shopping list
   // and the Laporan tab's weekly summary. Like the Piutang list, they do not
@@ -371,12 +380,13 @@
     S.cart = []; S.paid = 0; S.cat = 'Semua'; S.q = ''; $('#cash-paid').value = ''; $('#pos-search').value = '';
     // A customer on a not-yet-recorded credit sale belongs to the old store too.
     S.customerName = ''; $('#credit-name').value = '';
-    S.debts = null; S.insights = null;
+    S.debts = null; S.insights = null; S.todaySales = null;
     cartChanged();
     renderShell(); $('#dlg-stores').close();
     toast('Toko aktif: ' + ((S.stores.find((s) => s.id === id) || {}).name || ''));
     await loadStore(); loadProducts(); loadMovements(); loadCustomers();
     if (S.tab === 'laporan') { loadReport(); loadDebts(); }
+    if (S.tab === 'kasir') loadToday();
   }
 
   // ── Kasir ──
@@ -652,6 +662,7 @@
       loadCustomers();
       if (S.report) loadReport();
       if (S.debts) loadDebts();
+      loadToday();
       toast('Transaksi ' + sale.invoiceNo + ' berhasil');
       showReceipt(sale.id);
     } catch (e) {
@@ -1007,6 +1018,7 @@
     toast(msg || ('Toko ' + created.name + ' dibuat'));
     await loadStore(); loadProducts(); loadMovements(); loadCustomers();
     if (S.tab === 'laporan') { loadReport(); loadDebts(); }
+    if (S.tab === 'kasir') loadToday();
   }
   $('#form-new-store').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1142,6 +1154,28 @@
     box.innerHTML = html;
   }
 
+  // ── Penjualan hari ini ──
+  // One read-only bar at the top of the Kasir tab, laid out like one cell row
+  // of the daily report's summary.
+  function renderToday() {
+    const box = $('#today-sales');
+    const note = (S.todaySales && !S.todaySales.count) ? 'Belum ada transaksi hari ini' : 'Omzet setelah diskon, sebelum PPN';
+    const head = '<div class="min-w-0"><h3 id="today-title" class="text-body font-medium">Penjualan hari ini</h3>'
+      + '<p class="text-small text-muted">' + note + '</p></div>';
+    if (S.todayState === 'error') {
+      box.innerHTML = '<div role="alert" class="min-w-0"><p class="text-body font-medium">Penjualan hari ini gagal dimuat</p>'
+        + '<p class="text-small text-muted">Kasir tetap bisa dipakai.</p></div>'
+        + '<button type="button" class="btn-secondary" data-retry="today">Coba lagi</button>';
+      return;
+    }
+    const stat = (label, value) => '<div><dt class="text-small text-muted">' + label + '</dt><dd class="text-heading">' + value + '</dd></div>';
+    const t = S.todaySales;
+    box.innerHTML = head + '<dl class="flex gap-8">'
+      + stat('Omzet', S.todayState === 'loading' ? '<span class="skeleton block h-7 w-28"></span>' : rp(t ? t.revenue : 0))
+      + stat('Transaksi', S.todayState === 'loading' ? '<span class="skeleton block h-7 w-10"></span>' : String(t ? t.count : 0))
+      + '</dl>';
+  }
+
   // ── Piutang pelanggan ──
   function renderDebts() {
     const box = $('#debt-body');
@@ -1196,6 +1230,7 @@
     S.tab = tab;
     $$('[role=tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
     ['kasir', 'stok', 'laporan'].forEach((t) => { $('#tab-' + t).hidden = t !== tab; });
+    if (tab === 'kasir' && hasStore()) loadToday();
     if (tab === 'stok' && S.movementsState !== 'ok') loadMovements();
     if (tab === 'laporan') { loadReport(); loadDebts(); loadInsights(); }
   }
@@ -1387,7 +1422,7 @@
     }
     else if (t.hasAttribute('data-qris-setup')) { openStoreProfile(); $('#s-qris-label').focus(); }
     else if (d.bankDel !== undefined) { bankDraft.splice(Number(d.bankDel), 1); renderBankRows(); }
-    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: retryStores, debts: loadDebts, insights: loadInsights })[d.retry]();
+    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: retryStores, debts: loadDebts, insights: loadInsights, today: loadToday })[d.retry]();
   });
 
   // ── Boot ──
@@ -1405,7 +1440,7 @@
   $('#report-date').value = S.reportDate;
   $('#report-month').value = S.reportMonth;
   renderReportPeriod();
-  renderCart(); renderProducts(); renderShell();
+  renderCart(); renderProducts(); renderShell(); renderToday();
   (async function boot() {
     if (!(await loadStores())) { setTab('kasir'); renderBrand(); return; }
     await afterStores();
