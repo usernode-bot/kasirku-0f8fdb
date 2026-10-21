@@ -834,6 +834,20 @@ function mountApi({ app, pool, IS_STAGING }) {
     } finally { client.release(); }
   }));
 
+  // Today's takings at a glance for the Kasir tab: the same omzet the daily
+  // report shows (after discount, before PPN) and how many sales were made on
+  // the Asia/Jakarta day. Read-only, one store, and registered before
+  // /api/sales/:id so "today" is never read as a sale id.
+  app.get('/api/sales/today', h(async (req, res) => {
+    const date = jakartaDate(req.now);
+    if (!req.store) return res.json({ date, count: 0, revenue: 0 });
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS count, COALESCE(SUM(subtotal - discount_amount),0)::bigint AS revenue
+       FROM sales WHERE store_id = $1 AND (created_at AT TIME ZONE '${TZ}')::date = $2::date`,
+      [req.store.id, date]);
+    res.json({ date, count: rows[0].count, revenue: Number(rows[0].revenue) });
+  }));
+
   app.get('/api/sales/:id', h(async (req, res) => {
     if (!req.store) throw new HttpError(404, 'Transaksi tidak ditemukan');
     const id = int(req.params.id, 'ID');
