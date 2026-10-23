@@ -116,6 +116,23 @@
       "name": "Insights answer honestly for a visitor without a store",
       "path": "/api/insights",
       "expectText": "\"shopping\":[]"
+    },
+    {
+      "id": "shifts.empty",
+      "name": "Shift closings answer honestly for a visitor without a store",
+      "path": "/api/shifts",
+      "expectText": "\"closings\":[]"
+    },
+    {
+      "id": "laporan.shift-dialog",
+      "name": "Laporan has the close shift dialog",
+      "path": "/",
+      "expectSelector": "#dlg-shift",
+      "impact": [
+        "public/**",
+        "api.js",
+        "styles/**"
+      ]
     }
   ]
 }

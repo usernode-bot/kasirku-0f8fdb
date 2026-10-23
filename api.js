@@ -169,6 +169,23 @@ CREATE TABLE IF NOT EXISTS debt_payments (
 );
 COMMENT ON TABLE debt_payments IS 'staging:private';
 CREATE UNIQUE INDEX IF NOT EXISTS debt_payments_store_client_ref ON debt_payments (store_id, client_ref) WHERE client_ref IS NOT NULL;
+
+-- Tutup shift: the cash counted at closing time against the cash the day's
+-- Tunai sales say should be in the drawer. The expected amount is computed by
+-- the server when the closing is saved and kept as a snapshot; rows are
+-- append-only (no route updates or deletes one) and one per store per day.
+CREATE TABLE IF NOT EXISTS shift_closings (
+  id SERIAL PRIMARY KEY,
+  store_id INT NOT NULL REFERENCES stores(id),
+  business_date DATE NOT NULL,
+  expected_cash INT NOT NULL,
+  counted_cash INT NOT NULL CHECK (counted_cash >= 0),
+  difference INT NOT NULL,
+  actor TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE shift_closings IS 'staging:private';
+CREATE UNIQUE INDEX IF NOT EXISTS shift_closings_store_day ON shift_closings (store_id, business_date);
 `;
 
 // One-time legacy migration: the old single-shop `store_profile` row (id = 1)
@@ -329,6 +346,19 @@ async function seedDemo(pool) {
      WHERE c.store_id = $1 AND c.name = 'Staging demo Pak Budi'
        AND EXISTS (SELECT 1 FROM sales s WHERE s.store_id = $1 AND s.invoice_no = 'DEMO-INV-004')
      ON CONFLICT (store_id, client_ref) WHERE client_ref IS NOT NULL DO NOTHING`, [DEMO_STORE_1]);
+  // Two obviously fake past shift closings (one short, one exact) so the
+  // Riwayat tutup shift list can be seen; today stays open so the Tutup shift
+  // button can be tried. Only the first boot on an empty table inserts them,
+  // so restarts on later days never keep adding rows.
+  const closings = await pool.query(
+    'SELECT 1 FROM shift_closings WHERE store_id = $1 LIMIT 1', [DEMO_STORE_1]);
+  if (!closings.rows.length) {
+    await pool.query(
+      `INSERT INTO shift_closings (store_id, business_date, expected_cash, counted_cash, difference, actor)
+       VALUES ($1, (NOW() AT TIME ZONE '${TZ}')::date - 1, 152000, 150000, -2000, 'staging-demo-kasir'),
+              ($1, (NOW() AT TIME ZONE '${TZ}')::date - 2, 98500, 98500, 0, 'staging-demo-kasir')`,
+      [DEMO_STORE_1]);
+  }
 }
 
 // Example sales for the "Coba dengan data contoh" button: one entry is
@@ -947,6 +977,75 @@ function mountApi({ app, pool, IS_STAGING }) {
           return res.json({ customerId, name: row.name, owed, duplicate: true });
         }
       }
+      throw e;
+    } finally { client.release(); }
+  }));
+
+  // ── Tutup shift ──
+  // The cash that should be in the drawer from today's Tunai sales (their
+  // total, which is what the customer hands over), and the closings already
+  // recorded. Only the drawer's own money counts: QRIS, Debit and Transfer
+  // bank sales never go into it, Bayar nanti is unpaid, and a debt payment is
+  // not a sale. One closing per store per Asia/Jakarta day.
+  const cashToday = async (db, storeId, date) => {
+    const { rows } = await db.query(
+      `SELECT COUNT(*)::int AS count, COALESCE(SUM(total),0)::bigint AS total
+       FROM sales WHERE store_id = $1 AND payment_method = 'cash'
+         AND (created_at AT TIME ZONE '${TZ}')::date = $2::date`, [storeId, date]);
+    return { count: rows[0].count, expectedCash: Number(rows[0].total) };
+  };
+  const closingRow = (r) => ({
+    id: r.id, date: r.date, expectedCash: r.expected_cash, countedCash: r.counted_cash,
+    difference: r.difference, closedBy: r.actor, createdAt: r.created_at,
+  });
+  const CLOSING_COLS = `id, to_char(business_date, 'YYYY-MM-DD') AS date, expected_cash,
+    counted_cash, difference, actor, created_at`;
+
+  app.get('/api/shifts', h(async (req, res) => {
+    const date = jakartaDate(req.now);
+    if (!req.store) return res.json({ date, expectedCash: 0, cashCount: 0, today: null, closings: [] });
+    const storeId = req.store.id;
+    const cash = await cashToday(pool, storeId, date);
+    const today = (await pool.query(
+      `SELECT ${CLOSING_COLS} FROM shift_closings WHERE store_id = $1 AND business_date = $2::date`,
+      [storeId, date])).rows[0];
+    const closings = await pool.query(
+      `SELECT ${CLOSING_COLS} FROM shift_closings WHERE store_id = $1
+       ORDER BY business_date DESC LIMIT 20`, [storeId]);
+    res.json({ date, expectedCash: cash.expectedCash, cashCount: cash.count,
+      today: today ? closingRow(today) : null, closings: closings.rows.map(closingRow) });
+  }));
+
+  app.post('/api/shifts/close', h(async (req, res) => {
+    if (!req.user) throw new HttpError(401, 'account_required');
+    if (!req.store) throw new HttpError(404, 'Toko tidak ditemukan');
+    const storeId = req.store.id;
+    const date = jakartaDate(req.now);
+    const b = req.body || {};
+    const countedCash = int(b.countedCash, 'Uang tunai dihitung', { min: 0 });
+    const alreadyClosed = () => new HttpError(409, 'Shift hari ini sudah ditutup');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Locking the store row serialises two devices closing at once, so the
+      // day can never get a second row (the unique index backs this up).
+      const store = await client.query('SELECT id FROM stores WHERE id = $1 FOR UPDATE', [storeId]);
+      if (!store.rows.length) throw new HttpError(404, 'Toko tidak ditemukan');
+      const done = await client.query(
+        'SELECT 1 FROM shift_closings WHERE store_id = $1 AND business_date = $2::date', [storeId, date]);
+      if (done.rows.length) throw alreadyClosed();
+      // Worked out at the moment of saving and kept as it was then.
+      const expected = (await cashToday(client, storeId, date)).expectedCash;
+      const row = (await client.query(
+        `INSERT INTO shift_closings (store_id, business_date, expected_cash, counted_cash, difference, actor)
+         VALUES ($1, $2::date, $3, $4, $5, $6) RETURNING ${CLOSING_COLS}`,
+        [storeId, date, expected, countedCash, countedCash - expected, actor(req)])).rows[0];
+      await client.query('COMMIT');
+      res.status(201).json({ closing: closingRow(row) });
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      // Lost the race to another close of the same day.
+      if (e.code === '23505') throw alreadyClosed();
       throw e;
     } finally { client.release(); }
   }));
