@@ -38,10 +38,16 @@
   }
 
   // ── API ──
-  const urlToken = new URLSearchParams(location.search).get('token');
+  const urlParams = new URLSearchParams(location.search);
+  const urlToken = urlParams.get('token');
+  // A link may name the tab to open on (`?tab=laporan`) and the active store
+  // (`?store=<id>`, the same name the server reads on a GET), so a staging
+  // preview can land straight on the screen it is meant to show.
+  let bootTab = urlParams.get('tab') || '';
+  const urlStore = Number(urlParams.get('store'));
   // Staging previews of the seeded demo shops: the page passes `demo=1` on
   // to every call, and the server only honours it in staging.
-  const demo = new URLSearchParams(location.search).get('demo') === '1';
+  const demo = urlParams.get('demo') === '1';
   if (urlToken) { try { sessionStorage.setItem('kasirku-token', urlToken); } catch (_) {} }
   function token() {
     if (urlToken) return urlToken;
@@ -73,7 +79,8 @@
 
   // ── State ──
   const S = {
-    tab: 'kasir', stores: [], storesState: 'loading', activeStoreId: readSavedStore(),
+    tab: 'kasir', stores: [], storesState: 'loading',
+    activeStoreId: Number.isInteger(urlStore) && urlStore > 0 ? urlStore : readSavedStore(),
     store: null, products: [], productsState: 'loading', q: '', cat: 'Semua', stockQ: '',
     cart: [], discType: 'none', discValue: 0, taxPct: 11, method: 'cash', paid: 0, paying: false,
     customerName: '', customers: [],
@@ -1546,7 +1553,8 @@
   // then its products, movements, customers and, on Laporan, the reports.
   // Shared by boot and by the gate's Coba lagi, which may find stores.
   async function afterStores() {
-    setTab(location.hash.slice(1));
+    setTab(location.hash.slice(1) || bootTab);
+    bootTab = '';
     await loadStore(); loadProducts(); loadMovements(); loadCustomers();
     if (S.tab === 'laporan') { loadReport(); loadDebts(); loadShifts(); }
   }

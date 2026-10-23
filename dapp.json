@@ -144,6 +144,28 @@
         "api.js",
         "styles/**"
       ]
+    },
+    {
+      "id": "laporan.tab-link",
+      "name": "The staging demo opens on Laporan from a ?tab=laporan link",
+      "path": "/?demo=1&tab=laporan",
+      "expectText": "Tutup shift hari ini",
+      "impact": [
+        "public/**",
+        "api.js",
+        "styles/**"
+      ]
+    },
+    {
+      "id": "laporan.shift-empty",
+      "name": "A shop with no sales shows the empty shift bar and history line",
+      "path": "/?demo=1&store=900101&tab=laporan",
+      "expectText": "Belum ada riwayat tutup shift.",
+      "impact": [
+        "public/**",
+        "api.js",
+        "styles/**"
+      ]
     }
   ]
 }
