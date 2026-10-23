@@ -39,6 +39,9 @@
 
   // ── API ──
   const urlToken = new URLSearchParams(location.search).get('token');
+  // Staging previews of the seeded demo shops: the page passes `demo=1` on
+  // to every call, and the server only honours it in staging.
+  const demo = new URLSearchParams(location.search).get('demo') === '1';
   if (urlToken) { try { sessionStorage.setItem('kasirku-token', urlToken); } catch (_) {} }
   function token() {
     if (urlToken) return urlToken;
@@ -51,8 +54,9 @@
     if (S.activeStoreId) headers['x-usernode-store'] = String(S.activeStoreId);
     if (window.usernode && usernode.previewNow) headers['x-usernode-now'] = usernode.now().toISOString();
     let res;
+    const url = demo ? path + (path.includes('?') ? '&' : '?') + 'demo=1' : path;
     try {
-      res = await fetch(path, { method: o.method || 'GET', headers, body: o.body ? JSON.stringify(o.body) : undefined });
+      res = await fetch(url, { method: o.method || 'GET', headers, body: o.body ? JSON.stringify(o.body) : undefined });
     } catch (_) {
       const err = new Error('Koneksi terputus');
       err.status = 0;
@@ -122,8 +126,12 @@
   // ── Loading ──
   async function loadStores() {
     try {
-      S.stores = (await api('/api/stores')).stores;
+      const data = await api('/api/stores');
+      S.stores = data.stores;
       S.storesState = 'ok';
+      // A demo preview always starts on the demo shop the server picked, so
+      // an earlier visit's saved real store never hides the populated screen.
+      if (demo && data.activeId) S.activeStoreId = data.activeId;
     } catch (e) { S.storesState = 'error'; S.stores = []; }
     const ids = S.stores.map((s) => s.id);
     if (S.activeStoreId && !ids.includes(S.activeStoreId)) S.activeStoreId = null;

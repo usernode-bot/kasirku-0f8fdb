@@ -496,6 +496,16 @@ function mountApi({ app, pool, IS_STAGING }) {
   }
   async function resolveActiveStore(req) {
     const wanted = requestedStoreId(req);
+    // Staging previews of the seeded demo shops: `?demo=1` (which the page
+    // passes on to its own calls) picks one of the fake-owner demo stores so
+    // the populated screens and their actions can be seen without the
+    // visitor having to create anything. Never production, and never on a
+    // plain route, so the honest empty answer stays testable.
+    if (req.demo) {
+      const id = wanted === DEMO_STORE_2 ? DEMO_STORE_2 : DEMO_STORE_1;
+      const { rows } = await pool.query('SELECT * FROM stores WHERE id = $1', [id]);
+      return rows[0] || null;
+    }
     const owner = req.user && req.user.id != null ? req.user.id : null;
     if (owner == null) return null;
     if (wanted != null) {
@@ -510,12 +520,18 @@ function mountApi({ app, pool, IS_STAGING }) {
   // route that needs it reads `req.store`; when it is null the route answers
   // its honest empty result.
   app.use('/api', h(async (req, _res, next) => {
+    req.demo = IS_STAGING && req.query.demo === '1';
     req.store = await resolveActiveStore(req);
     next();
   }));
 
   // ── Stores ──
   app.get('/api/stores', h(async (req, res) => {
+    if (req.demo) {
+      const { rows } = await pool.query(
+        'SELECT * FROM stores WHERE id IN ($1, $2) ORDER BY id', [DEMO_STORE_1, DEMO_STORE_2]);
+      return res.json({ stores: rows.map(storeRow), activeId: req.store ? req.store.id : null });
+    }
     const owner = req.user && req.user.id != null ? req.user.id : null;
     if (owner == null) return res.json({ stores: [], activeId: null });
     const { rows } = await pool.query('SELECT * FROM stores WHERE owner_id = $1 ORDER BY id', [owner]);

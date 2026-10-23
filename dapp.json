@@ -133,6 +133,17 @@
         "api.js",
         "styles/**"
       ]
+    },
+    {
+      "id": "laporan.shift-demo",
+      "name": "The staging demo shop opens Laporan with today's cash and past closings",
+      "path": "/?demo=1#laporan",
+      "expectText": "Tutup shift hari ini",
+      "impact": [
+        "public/**",
+        "api.js",
+        "styles/**"
+      ]
     }
   ]
 }
