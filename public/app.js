@@ -38,7 +38,16 @@
   }
 
   // ── API ──
-  const urlToken = new URLSearchParams(location.search).get('token');
+  const urlParams = new URLSearchParams(location.search);
+  const urlToken = urlParams.get('token');
+  // A link may name the tab to open on (`?tab=laporan`) and the active store
+  // (`?store=<id>`, the same name the server reads on a GET), so a staging
+  // preview can land straight on the screen it is meant to show.
+  let bootTab = urlParams.get('tab') || '';
+  const urlStore = Number(urlParams.get('store'));
+  // Staging previews of the seeded demo shops: the page passes `demo=1` on
+  // to every call, and the server only honours it in staging.
+  const demo = urlParams.get('demo') === '1';
   if (urlToken) { try { sessionStorage.setItem('kasirku-token', urlToken); } catch (_) {} }
   function token() {
     if (urlToken) return urlToken;
@@ -51,8 +60,9 @@
     if (S.activeStoreId) headers['x-usernode-store'] = String(S.activeStoreId);
     if (window.usernode && usernode.previewNow) headers['x-usernode-now'] = usernode.now().toISOString();
     let res;
+    const url = demo ? path + (path.includes('?') ? '&' : '?') + 'demo=1' : path;
     try {
-      res = await fetch(path, { method: o.method || 'GET', headers, body: o.body ? JSON.stringify(o.body) : undefined });
+      res = await fetch(url, { method: o.method || 'GET', headers, body: o.body ? JSON.stringify(o.body) : undefined });
     } catch (_) {
       const err = new Error('Koneksi terputus');
       err.status = 0;
@@ -69,7 +79,8 @@
 
   // ── State ──
   const S = {
-    tab: 'kasir', stores: [], storesState: 'loading', activeStoreId: readSavedStore(),
+    tab: 'kasir', stores: [], storesState: 'loading',
+    activeStoreId: Number.isInteger(urlStore) && urlStore > 0 ? urlStore : readSavedStore(),
     store: null, products: [], productsState: 'loading', q: '', cat: 'Semua', stockQ: '',
     cart: [], discType: 'none', discValue: 0, taxPct: 11, method: 'cash', paid: 0, paying: false,
     customerName: '', customers: [],
@@ -77,6 +88,7 @@
     movements: null, movementsState: 'loading', report: null, reportState: 'loading', reportDate: today(),
     today: null, todayState: 'loading',
     debts: null, debtsState: 'loading', debtRef: null, debtCustomerId: null,
+    shifts: null, shiftsState: 'loading',
     insights: null, insightsState: 'loading',
     reportMode: 'daily', reportMonth: today().slice(0, 7),
     receipt: null,
@@ -121,8 +133,12 @@
   // ── Loading ──
   async function loadStores() {
     try {
-      S.stores = (await api('/api/stores')).stores;
+      const data = await api('/api/stores');
+      S.stores = data.stores;
       S.storesState = 'ok';
+      // A demo preview always starts on the demo shop the server picked, so
+      // an earlier visit's saved real store never hides the populated screen.
+      if (demo && data.activeId) S.activeStoreId = data.activeId;
     } catch (e) { S.storesState = 'error'; S.stores = []; }
     const ids = S.stores.map((s) => s.id);
     if (S.activeStoreId && !ids.includes(S.activeStoreId)) S.activeStoreId = null;
@@ -190,6 +206,15 @@
     S.debtsState = 'loading'; renderDebts();
     try { S.debts = await api('/api/debts'); S.debtsState = 'ok'; } catch (e) { S.debtsState = 'error'; }
     renderDebts();
+  }
+  // The Tutup shift bar at the top of the Laporan tab: today's cash from Tunai
+  // sales, today's closing if there is one, and the latest closings. Like the
+  // Piutang list it is always "today", never the report's date picker.
+  async function loadShifts() {
+    if (!hasStore()) { S.shifts = null; S.shiftsState = 'ok'; renderShifts(); return; }
+    S.shiftsState = 'loading'; renderShifts();
+    try { S.shifts = await api('/api/shifts'); S.shiftsState = 'ok'; } catch (e) { S.shiftsState = 'error'; }
+    renderShifts();
   }
   // The "Penjualan hari ini" bar at the top of the Kasir tab: the same today's
   // omzet the daily report shows, refreshed after each sale and tab visit.
@@ -381,12 +406,13 @@
     // A customer on a not-yet-recorded credit sale belongs to the old store too.
     S.customerName = ''; $('#credit-name').value = '';
     S.debts = null; S.insights = null;
+    S.shifts = null;
     S.today = null;
     cartChanged();
     renderShell(); $('#dlg-stores').close();
     toast('Toko aktif: ' + ((S.stores.find((s) => s.id === id) || {}).name || ''));
     await loadStore(); loadProducts(); loadMovements(); loadCustomers();
-    if (S.tab === 'laporan') { loadReport(); loadDebts(); }
+    if (S.tab === 'laporan') { loadReport(); loadDebts(); loadShifts(); }
     if (S.tab === 'kasir') loadToday();
   }
 
@@ -663,6 +689,7 @@
       loadCustomers(); loadToday();
       if (S.report) loadReport();
       if (S.debts) loadDebts();
+      if (S.shifts) loadShifts();
       toast('Transaksi ' + sale.invoiceNo + ' berhasil');
       showReceipt(sale.id);
     } catch (e) {
@@ -1013,11 +1040,11 @@
     S.activeStoreId = created.id; saveStore(created.id);
     S.cart = []; S.cat = 'Semua'; S.q = ''; cartChanged();
     S.customerName = ''; $('#credit-name').value = '';
-    S.debts = null;
+    S.debts = null; S.shifts = null;
     renderShell();
     toast(msg || ('Toko ' + created.name + ' dibuat'));
     await loadStore(); loadProducts(); loadMovements(); loadCustomers();
-    if (S.tab === 'laporan') { loadReport(); loadDebts(); }
+    if (S.tab === 'laporan') { loadReport(); loadDebts(); loadShifts(); }
     if (S.tab === 'kasir') loadToday();
   }
   $('#form-new-store').addEventListener('submit', async (e) => {
@@ -1179,6 +1206,77 @@
       + '<div><dt class="text-small text-muted">Transaksi</dt><dd class="text-heading">' + d.count + '</dd></div></dl>';
   }
 
+  // ── Tutup shift ──
+  // Selisih is counted minus expected: positive is more cash than the record
+  // says (Lebih), negative is short (Kurang, in the danger colour), 0 is Pas.
+  const selisih = (d) => (d > 0 ? 'Lebih ' + rp(d) : d < 0 ? 'Kurang ' + rp(-d) : 'Pas');
+  const selisihCls = (d) => (d < 0 ? 'text-danger' : '');
+  // A closing names a whole day, so it reads the weekday and the year too.
+  const fmtShiftDay = (ymd) => new Date(ymd + 'T12:00:00+07:00')
+    .toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+
+  function renderShifts() {
+    const box = $('#shift-body');
+    if (S.shiftsState === 'loading') {
+      box.innerHTML = '<div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 rounded-xl border border-line bg-surface px-4 py-3">'
+        + '<div><div class="skeleton h-5 w-40"></div><div class="skeleton mt-2 h-4 w-56"></div></div>'
+        + '<div class="skeleton h-7 w-28"></div></div>' + skeletonRows(2);
+      return;
+    }
+    if (S.shiftsState === 'error') {
+      box.innerHTML = '<div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 rounded-xl border border-line bg-surface px-4 py-3" role="alert">'
+        + '<div><h3 class="text-body font-medium">Tutup shift gagal dimuat</h3>'
+        + '<p class="text-small text-muted">Laporan lainnya tetap bisa dipakai.</p></div>'
+        + '<button type="button" class="btn-secondary" data-retry="shifts">Coba lagi</button></div>';
+      return;
+    }
+    const d = S.shifts;
+    if (!d) { box.innerHTML = ''; return; }
+    const bar = d.today
+      ? '<div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 rounded-xl border border-line bg-surface px-4 py-3">'
+        + '<div><h3 class="text-body font-medium">Tutup shift hari ini</h3>'
+        + '<p class="text-small text-muted">Sudah ditutup pukul ' + fmtTime(d.today.createdAt) + '</p></div>'
+        + '<dl class="flex flex-wrap gap-x-8 gap-y-2">'
+        + '<div><dt class="text-small text-muted">Seharusnya</dt><dd class="text-heading">' + rp(d.today.expectedCash) + '</dd></div>'
+        + '<div><dt class="text-small text-muted">Dihitung</dt><dd class="text-heading">' + rp(d.today.countedCash) + '</dd></div>'
+        + '<div><dt class="text-small text-muted">Selisih</dt><dd class="text-heading ' + selisihCls(d.today.difference) + '">' + selisih(d.today.difference) + '</dd></div></dl></div>'
+      : '<div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 rounded-xl border border-line bg-surface px-4 py-3">'
+        + '<div><h3 class="text-body font-medium">Tutup shift hari ini</h3>'
+        + '<p class="text-small text-muted">' + (d.cashCount
+          ? 'Belum ditutup. Uang tunai dari ' + d.cashCount + ' penjualan Tunai hari ini.'
+          : 'Belum ada penjualan Tunai hari ini.') + '</p></div>'
+        + '<dl><div><dt class="text-small text-muted">Uang tunai seharusnya</dt><dd class="text-heading">' + rp(d.expectedCash) + '</dd></div></dl>'
+        + '<button type="button" class="btn-primary" data-shift-close>Tutup shift</button></div>';
+    const rows = d.closings.length
+      ? '<ul class="list">' + d.closings.map((x) =>
+        '<li class="list-row"><div class="min-w-0 grow"><p class="text-body font-medium">' + esc(fmtShiftDay(x.date)) + '</p>'
+        + '<p class="text-small text-muted">Seharusnya ' + rp(x.expectedCash) + ', dihitung ' + rp(x.countedCash) + '</p></div>'
+        + '<p class="shrink-0 text-right text-body font-medium ' + selisihCls(x.difference) + '">' + selisih(x.difference) + '</p></li>').join('') + '</ul>'
+      : '<p class="text-small text-muted">Belum ada riwayat tutup shift.</p>';
+    box.innerHTML = bar + '<div><h3 class="section-label">Riwayat tutup shift</h3>' + rows + '</div>';
+  }
+
+  function openShiftClose() {
+    const d = S.shifts;
+    if (!d || d.today) return;
+    $('#sh-info').textContent = fmtShiftDay(d.date) + '. Uang tunai seharusnya ' + rp(d.expectedCash) + '.';
+    $('#sh-counted').value = '';
+    shiftPreview();
+    openDlg($('#dlg-shift'));
+    $('#sh-counted').focus();
+  }
+  function shiftPreview() {
+    const d = S.shifts;
+    if (!d) return;
+    const el = $('#sh-preview');
+    const raw = $('#sh-counted').value.trim();
+    if (raw === '') { el.textContent = ''; el.classList.remove('text-danger'); el.classList.add('text-muted'); return; }
+    const diff = digits(raw) - d.expectedCash;
+    el.textContent = diff === 0 ? 'Pas, uang tunai sesuai catatan.' : selisih(diff) + ' dari yang seharusnya.';
+    el.classList.toggle('text-danger', diff < 0);
+    el.classList.toggle('text-muted', diff >= 0);
+  }
+
   // ── Piutang pelanggan ──
   function renderDebts() {
     const box = $('#debt-body');
@@ -1235,7 +1333,7 @@
     ['kasir', 'stok', 'laporan'].forEach((t) => { $('#tab-' + t).hidden = t !== tab; });
     if (tab === 'kasir' && hasStore()) loadToday();
     if (tab === 'stok' && S.movementsState !== 'ok') loadMovements();
-    if (tab === 'laporan') { loadReport(); loadDebts(); loadInsights(); }
+    if (tab === 'laporan') { loadReport(); loadDebts(); loadInsights(); loadShifts(); }
   }
   const goto = (t) => { location.hash = t; };
   window.addEventListener('hashchange', () => setTab(location.hash.slice(1)));
@@ -1355,6 +1453,7 @@
   $('#cash-paid').addEventListener('input', (e) => { S.paid = digits(e.target.value); cartChanged(); updateTotals(); });
   $('#credit-name').addEventListener('input', (e) => { S.customerName = e.target.value; cartChanged(); updateTotals(); });
   $('#dp-amount').addEventListener('input', debtPreview);
+  $('#sh-counted').addEventListener('input', shiftPreview);
   $('#dp-full').addEventListener('click', () => {
     const d = S.debts && S.debts.debts.find((x) => x.customerId === S.debtCustomerId);
     if (!d) return;
@@ -1377,6 +1476,26 @@
       toast(out.owed === 0 ? 'Piutang ' + d.name + ' lunas' : 'Pembayaran dicatat');
       loadDebts();
     } catch (err) { setErr($('#dlg-debt-pay'), err.message); }
+    finally { btn.disabled = false; }
+  });
+
+  $('#form-shift').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if ($('#sh-counted').value.trim() === '') return setErr($('#dlg-shift'), 'Isi jumlahnya dulu.');
+    const countedCash = digits($('#sh-counted').value);
+    const btn = $('#form-shift button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const out = await api('/api/shifts/close', { method: 'POST', body: { countedCash } });
+      $('#dlg-shift').close();
+      toast('Shift ditutup, ' + selisih(out.closing.difference));
+      loadShifts();
+    } catch (err) {
+      setErr($('#dlg-shift'), err.message);
+      // Already closed (here or from another device): show the existing
+      // closing instead of leaving the bar offering the button again.
+      if (err.status === 409) loadShifts();
+    }
     finally { btn.disabled = false; }
   });
 
@@ -1415,6 +1534,7 @@
     else if (t.hasAttribute('data-new-product')) openProduct(null);
     else if (d.receipt) showReceipt(Number(d.receipt));
     else if (d.payDebt) openDebtPay(Number(d.payDebt));
+    else if (t.hasAttribute('data-shift-close')) openShiftClose();
     else if (d.goto) goto(d.goto);
     else if (d.copyAcc !== undefined) copyAccountNo(Number(d.copyAcc));
     else if (t.hasAttribute('data-bank-setup')) {
@@ -1425,7 +1545,7 @@
     }
     else if (t.hasAttribute('data-qris-setup')) { openStoreProfile(); $('#s-qris-label').focus(); }
     else if (d.bankDel !== undefined) { bankDraft.splice(Number(d.bankDel), 1); renderBankRows(); }
-    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: retryStores, debts: loadDebts, insights: loadInsights, today: loadToday })[d.retry]();
+    else if (d.retry) ({ products: loadProducts, movements: loadMovements, report: loadReport, stores: retryStores, debts: loadDebts, insights: loadInsights, today: loadToday, shifts: loadShifts })[d.retry]();
   });
 
   // ── Boot ──
@@ -1433,9 +1553,10 @@
   // then its products, movements, customers and, on Laporan, the reports.
   // Shared by boot and by the gate's Coba lagi, which may find stores.
   async function afterStores() {
-    setTab(location.hash.slice(1));
+    setTab(location.hash.slice(1) || bootTab);
+    bootTab = '';
     await loadStore(); loadProducts(); loadMovements(); loadCustomers();
-    if (S.tab === 'laporan') { loadReport(); loadDebts(); }
+    if (S.tab === 'laporan') { loadReport(); loadDebts(); loadShifts(); }
   }
   async function retryStores() {
     if (await loadStores()) await afterStores();
